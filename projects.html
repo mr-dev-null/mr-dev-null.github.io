@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Projects — Research Notes</title>
+        <meta
+            name="description"
+            content="Open-source tools for malware analysis, reverse engineering, and security automation."
+        />
+        <meta property="og:title" content="Projects — Research Notes" />
+        <meta
+            property="og:description"
+            content="Open-source tools for malware analysis, reverse engineering, and security automation."
+        />
+        <meta property="og:type" content="website" />
+        <link rel="stylesheet" href="../style.css" />
+    </head>
+    <body>
+        <nav>
+            <a href="index.html" class="logo">dev null notes</a>
+            <div class="nav-links">
+                <a href="index.html">home</a>
+                <a href="projects.html" class="active">projects</a>
+                <a href="about.html">about</a>
+            </div>
+        </nav>
+
+        <header>
+            <h1>Projects &amp; Tools</h1>
+            <p>
+                Open-source tools, scripts, and utilities built for malware
+                analysis, reverse engineering, and security automation. All MIT
+                licensed unless noted.
+            </p>
+        </header>
+
+        <section>
+            <h2>Active</h2>
+
+            <ul class="project-list">
+                <li>
+                    <a
+                        href="https://github.com/0xjhon/malscope"
+                        target="_blank"
+                        rel="noopener"
+                        >malscope</a
+                    >
+                    <p>
+                        Automated static analysis pipeline for Windows PE and
+                        Linux ELF malware samples. Extracts imports, strings,
+                        and entropy sections; detects packers; and generates
+                        YARA rules automatically. Clean CLI, structured JSON
+                        output.
+                    </p>
+                    <div class="meta">
+                        <span>Go</span><span>·</span><span>YARA</span>
+                        <span>·</span><span>PE / ELF</span>
+                    </div>
+                    <div class="project-links">
+                        <a
+                            href="https://github.com/0xjhon/malscope"
+                            target="_blank"
+                            rel="noopener"
+                            >github →</a
+                        >
+                    </div>
+                </li>
+
+                <li>
+                    <a
+                        href="https://github.com/0xjhon/ptrace-tracer"
+                        target="_blank"
+                        rel="noopener"
+                        >ptrace-tracer</a
+                    >
+                    <p>
+                        Linux syscall interceptor built on
+                        <code>ptrace(2)</code> — a minimal strace
+                        reimplementation in Go. Reads registers, decodes syscall
+                        arguments with types, handles forked children, and
+                        outputs structured JSON traces. Useful for malware
+                        sandbox analysis.
+                    </p>
+                    <div class="meta">
+                        <span>Go</span><span>·</span><span>Linux</span>
+                        <span>·</span><span>ptrace</span>
+                    </div>
+                    <div class="project-links">
+                        <a
+                            href="https://github.com/0xjhon/ptrace-tracer"
+                            target="_blank"
+                            rel="noopener"
+                            >github →</a
+                        >
+                    </div>
+                </li>
+
+                <li>
+                    <a
+                        href="https://github.com/0xjhon/proxyhunter"
+                        target="_blank"
+                        rel="noopener"
+                        >proxyhunter</a
+                    >
+                    <p>
+                        High-speed concurrent proxy scraper and validator.
+                        Scrapes multiple sources in parallel, validates with
+                        configurable timeout and judge URLs, exports to TXT /
+                        CSV / JSON. Atomic round-robin rotation built in.
+                    </p>
+                    <div class="meta">
+                        <span>Go</span><span>·</span><span>HTTP</span>
+                        <span>·</span><span>Concurrency</span>
+                    </div>
+                    <div class="project-links">
+                        <a
+                            href="https://github.com/0xjhon/proxyhunter"
+                            target="_blank"
+                            rel="noopener"
+                            >github →</a
+                        >
+                    </div>
+                </li>
+
+                <li>
+                    <a
+                        href="https://github.com/0xjhon/re-toolkit"
+                        target="_blank"
+                        rel="noopener"
+                        >re-toolkit</a
+                    >
+                    <p>
+                        A collection of Ghidra and IDA Python scripts for
+                        automating repetitive reverse engineering tasks:
+                        renaming functions by pattern, recovering Go symbols,
+                        bulk decompiling to files, and detecting obfuscation
+                        techniques.
+                    </p>
+                    <div class="meta">
+                        <span>Python</span><span>·</span><span>Ghidra</span>
+                        <span>·</span><span>IDA</span>
+                    </div>
+                    <div class="project-links">
+                        <a
+                            href="https://github.com/0xjhon/re-toolkit"
+                            target="_blank"
+                            rel="noopener"
+                            >github →</a
+                        >
+                    </div>
+                </li>
+            </ul>
+
+            <h2>Archived</h2>
+
+            <ul class="project-list">
+                <li>
+                    <a href="#">goScan</a>
+                    <p>
+                        A lightweight concurrent TCP port scanner in Go.
+                        Superseded by more mature tools; kept for reference.
+                    </p>
+                    <div class="meta">
+                        <span>Go</span><span>·</span><span>archived</span>
+                    </div>
+                </li>
+            </ul>
+        </section>
+
+        <footer>
+            <span
+                >© <span class="copyright-year">2024</span> Research
+                Notes.</span
+            >
+            <span>Built with plain HTML &amp; CSS.</span>
+        </footer>
+
+        <script src="../main.js"></script>
+    </body>
+</html>
