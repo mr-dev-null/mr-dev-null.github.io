@@ -1,5 +1,5 @@
 ---
-title: Return Address Overwrite Owning the Instruction Pointer
+title: Part-2 Return Address Overwrite Owning the Instruction Pointer
 description: This article is about that mechanism in full. Not just *that* it works, but *why* it works at the CPU level, what the compiler and OS do to stop you, and how to systematically defeat every layer. We're going from `CALL`/`RET` mnemonics all the way to remote code execution on a hardened binary.
 category: pwn
 date: 2026-07-01

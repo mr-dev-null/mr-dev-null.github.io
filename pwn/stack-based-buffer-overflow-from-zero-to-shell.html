@@ -3,12 +3,12 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Stack-Based Buffer Overflow  From Zero to Shell — dev null notes</title>
+        <title>Part-1 Stack-Based Buffer Overflow  From Zero to Shell — dev null notes</title>
         <meta name="description" content="There&#x27;s a moment every exploit developer remembers — the first time you type `python3 -c &quot;print(&#x27;A&#x27;*100)&quot;` into a terminal, pipe it into a binary, and watch `Segmentation fault` light up your screen. That crash is not a failure. That crash is a hello." />
         <meta name="author" content="mr-dev-null" />
         <meta name="keywords" content="pwn, c" />
 
-        <meta property="og:title" content="Stack-Based Buffer Overflow  From Zero to Shell" />
+        <meta property="og:title" content="Part-1 Stack-Based Buffer Overflow  From Zero to Shell" />
         <meta property="og:description" content="There&#x27;s a moment every exploit developer remembers — the first time you type `python3 -c &quot;print(&#x27;A&#x27;*100)&quot;` into a terminal, pipe it into a binary, and watch `Segmentation fault` light up your screen. That crash is not a failure. That crash is a hello." />
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://mr-dev-null.github.io/pwn/stack-based-buffer-overflow-from-zero-to-shell.html" />
@@ -18,13 +18,13 @@
         <meta property="article:tag" content="pwn" /><meta property="article:tag" content="c" />
 
         <meta name="twitter:card" content="summary" />
-        <meta name="twitter:title" content="Stack-Based Buffer Overflow  From Zero to Shell" />
+        <meta name="twitter:title" content="Part-1 Stack-Based Buffer Overflow  From Zero to Shell" />
         <meta name="twitter:description" content="There&#x27;s a moment every exploit developer remembers — the first time you type `python3 -c &quot;print(&#x27;A&#x27;*100)&quot;` into a terminal, pipe it into a binary, and watch `Segmentation fault` light up your screen. That crash is not a failure. That crash is a hello." />
 
         <link rel="canonical" href="https://mr-dev-null.github.io/pwn/stack-based-buffer-overflow-from-zero-to-shell.html" />
         <link rel="stylesheet" href="/style.css" />
 
-        <script type="application/ld+json">{"@context": "[https://schema.org](https://schema.org)", "@type": "BlogPosting", "headline": "Stack-Based Buffer Overflow  From Zero to Shell", "description": "There's a moment every exploit developer remembers — the first time you type `python3 -c \"print('A'*100)\"` into a terminal, pipe it into a binary, and watch `Segmentation fault` light up your screen. That crash is not a failure. That crash is a hello.", "datePublished": "2026-07-01", "author": {"@type": "Person", "name": "mr-dev-null"}, "publisher": {"@type": "Person", "name": "mr-dev-null"}, "url": "https://mr-dev-null.github.io/pwn/stack-based-buffer-overflow-from-zero-to-shell.html", "keywords": "pwn, c"}</script>
+        <script type="application/ld+json">{"@context": "[https://schema.org](https://schema.org)", "@type": "BlogPosting", "headline": "Part-1 Stack-Based Buffer Overflow  From Zero to Shell", "description": "There's a moment every exploit developer remembers — the first time you type `python3 -c \"print('A'*100)\"` into a terminal, pipe it into a binary, and watch `Segmentation fault` light up your screen. That crash is not a failure. That crash is a hello.", "datePublished": "2026-07-01", "author": {"@type": "Person", "name": "mr-dev-null"}, "publisher": {"@type": "Person", "name": "mr-dev-null"}, "url": "https://mr-dev-null.github.io/pwn/stack-based-buffer-overflow-from-zero-to-shell.html", "keywords": "pwn, c"}</script>
     </head>
     <body>
         <div id="reading-progress"></div>
@@ -45,7 +45,7 @@
         <article>
             <div class="article-header">
                 <span class="category">PWN</span>
-                <h1>Stack-Based Buffer Overflow  From Zero to Shell</h1>
+                <h1>Part-1 Stack-Based Buffer Overflow  From Zero to Shell</h1>
                 <div class="meta">
                     <span>July 01, 2026</span>
                     <span>·</span>

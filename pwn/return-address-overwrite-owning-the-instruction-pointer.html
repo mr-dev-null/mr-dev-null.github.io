@@ -3,12 +3,12 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Return Address Overwrite Owning the Instruction Pointer — dev null notes</title>
+        <title>Part-2 Return Address Overwrite Owning the Instruction Pointer — dev null notes</title>
         <meta name="description" content="This article is about that mechanism in full. Not just *that* it works, but *why* it works at the CPU level, what the compiler and OS do to stop you, and how to systematically defeat every layer. We&#x27;re going from `CALL`/`RET` mnemonics all the way to remote code execution on a hardened binary." />
         <meta name="author" content="mr-dev-null" />
         <meta name="keywords" content="pwn, c" />
 
-        <meta property="og:title" content="Return Address Overwrite Owning the Instruction Pointer" />
+        <meta property="og:title" content="Part-2 Return Address Overwrite Owning the Instruction Pointer" />
         <meta property="og:description" content="This article is about that mechanism in full. Not just *that* it works, but *why* it works at the CPU level, what the compiler and OS do to stop you, and how to systematically defeat every layer. We&#x27;re going from `CALL`/`RET` mnemonics all the way to remote code execution on a hardened binary." />
         <meta property="og:type" content="article" />
         <meta property="og:url" content="https://mr-dev-null.github.io/pwn/return-address-overwrite-owning-the-instruction-pointer.html" />
@@ -18,13 +18,13 @@
         <meta property="article:tag" content="pwn" /><meta property="article:tag" content="c" />
 
         <meta name="twitter:card" content="summary" />
-        <meta name="twitter:title" content="Return Address Overwrite Owning the Instruction Pointer" />
+        <meta name="twitter:title" content="Part-2 Return Address Overwrite Owning the Instruction Pointer" />
         <meta name="twitter:description" content="This article is about that mechanism in full. Not just *that* it works, but *why* it works at the CPU level, what the compiler and OS do to stop you, and how to systematically defeat every layer. We&#x27;re going from `CALL`/`RET` mnemonics all the way to remote code execution on a hardened binary." />
 
         <link rel="canonical" href="https://mr-dev-null.github.io/pwn/return-address-overwrite-owning-the-instruction-pointer.html" />
         <link rel="stylesheet" href="/style.css" />
 
-        <script type="application/ld+json">{"@context": "[https://schema.org](https://schema.org)", "@type": "BlogPosting", "headline": "Return Address Overwrite Owning the Instruction Pointer", "description": "This article is about that mechanism in full. Not just *that* it works, but *why* it works at the CPU level, what the compiler and OS do to stop you, and how to systematically defeat every layer. We're going from `CALL`/`RET` mnemonics all the way to remote code execution on a hardened binary.", "datePublished": "2026-07-01", "author": {"@type": "Person", "name": "mr-dev-null"}, "publisher": {"@type": "Person", "name": "mr-dev-null"}, "url": "https://mr-dev-null.github.io/pwn/return-address-overwrite-owning-the-instruction-pointer.html", "keywords": "pwn, c"}</script>
+        <script type="application/ld+json">{"@context": "[https://schema.org](https://schema.org)", "@type": "BlogPosting", "headline": "Part-2 Return Address Overwrite Owning the Instruction Pointer", "description": "This article is about that mechanism in full. Not just *that* it works, but *why* it works at the CPU level, what the compiler and OS do to stop you, and how to systematically defeat every layer. We're going from `CALL`/`RET` mnemonics all the way to remote code execution on a hardened binary.", "datePublished": "2026-07-01", "author": {"@type": "Person", "name": "mr-dev-null"}, "publisher": {"@type": "Person", "name": "mr-dev-null"}, "url": "https://mr-dev-null.github.io/pwn/return-address-overwrite-owning-the-instruction-pointer.html", "keywords": "pwn, c"}</script>
     </head>
     <body>
         <div id="reading-progress"></div>
@@ -45,7 +45,7 @@
         <article>
             <div class="article-header">
                 <span class="category">PWN</span>
-                <h1>Return Address Overwrite Owning the Instruction Pointer</h1>
+                <h1>Part-2 Return Address Overwrite Owning the Instruction Pointer</h1>
                 <div class="meta">
                     <span>July 01, 2026</span>
                     <span>·</span>

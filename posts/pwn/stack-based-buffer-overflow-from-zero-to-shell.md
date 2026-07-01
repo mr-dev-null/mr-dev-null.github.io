@@ -1,5 +1,5 @@
 ---
-title: Stack-Based Buffer Overflow  From Zero to Shell
+title: Part-1 Stack-Based Buffer Overflow  From Zero to Shell
 description: There's a moment every exploit developer remembers — the first time you type `python3 -c "print('A'*100)"` into a terminal, pipe it into a binary, and watch `Segmentation fault` light up your screen. That crash is not a failure. That crash is a hello.
 category: pwn
 date: 2026-07-01
