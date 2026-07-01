@@ -26,6 +26,18 @@
                 <h2>Notes // PWN</h2>
                 
             <article>
+                <a href="/pwn/return-address-overwrite-owning-the-instruction-pointer.html">Return Address Overwrite Owning the Instruction Pointer</a>
+                <p>This article is about that mechanism in full. Not just *that* it works, but *why* it works at the CPU level, what the compiler and OS do to stop you, and how to systematically defeat every layer. We&#x27;re going from `CALL`/`RET` mnemonics all the way to remote code execution on a hardened binary.</p>
+                <div class="meta">
+                    <span>July 01, 2026</span>
+                    <span>·</span>
+                    <span>20 min read</span>
+                    <span>·</span>
+                    <span class="cat-tag">PWN</span>
+                    <span>·</span><span>#pwn · #c</span>
+                </div>
+            </article>
+            <article>
                 <a href="/pwn/stack-based-buffer-overflow-from-zero-to-shell.html">Stack-Based Buffer Overflow  From Zero to Shell</a>
                 <p>There&#x27;s a moment every exploit developer remembers — the first time you type `python3 -c &quot;print(&#x27;A&#x27;*100)&quot;` into a terminal, pipe it into a binary, and watch `Segmentation fault` light up your screen. That crash is not a failure. That crash is a hello.</p>
                 <div class="meta">

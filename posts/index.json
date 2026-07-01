@@ -1,5 +1,17 @@
 [
   {
+    "slug": "return-address-overwrite-owning-the-instruction-pointer",
+    "title": "Return Address Overwrite Owning the Instruction Pointer",
+    "description": "This article is about that mechanism in full. Not just *that* it works, but *why* it works at the CPU level, what the compiler and OS do to stop you, and how to systematically defeat every layer. We're going from `CALL`/`RET` mnemonics all the way to remote code execution on a hardened binary.",
+    "category": "pwn",
+    "date": "2026-07-01",
+    "reading_time": "20",
+    "tags": [
+      "pwn",
+      "c"
+    ]
+  },
+  {
     "slug": "stack-based-buffer-overflow-from-zero-to-shell",
     "title": "Stack-Based Buffer Overflow  From Zero to Shell",
     "description": "There's a moment every exploit developer remembers — the first time you type `python3 -c \"print('A'*100)\"` into a terminal, pipe it into a binary, and watch `Segmentation fault` light up your screen. That crash is not a failure. That crash is a hello.",
