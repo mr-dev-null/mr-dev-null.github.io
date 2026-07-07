@@ -301,41 +301,46 @@ p.interactive()</code></pre></div>
 #include &lt;sys/socket.h&gt;
 #include &lt;netinet/in.h&gt;
 
+int client_fd;
+
 void win(void) {
-    // in real scenario: dup2 socket to stdin/stdout, then execve
-    execl(&quot;/bin/sh&quot;, &quot;sh&quot;, NULL);
+dup2(client_fd, 0);
+dup2(client_fd, 1);
+dup2(client_fd, 2);
+execl(&quot;/bin/sh&quot;, &quot;sh&quot;, NULL);
 }
 
 void handle(int fd) {
-    char buf[128];
-    char greeting[] = &quot;hello: &quot;;
-    write(fd, greeting, sizeof(greeting)-1);
-    read(fd, buf, 256);   // overflow
-    write(fd, &quot;ok\n&quot;, 3);
+char buf[128];
+char greeting[] = &quot;hello: &quot;;
+write(fd, greeting, sizeof(greeting)-1);
+read(fd, buf, 256);   // overflow
+write(fd, &quot;ok\n&quot;, 3);
 }
 
 int main(void) {
-    int srv = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in addr = {
-        .sin_family = AF_INET,
-        .sin_port   = htons(4444),
-        .sin_addr.s_addr = INADDR_ANY
-    };
-    int opt = 1;
-    setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &amp;opt, sizeof(opt));
-    bind(srv, (struct sockaddr*)&amp;addr, sizeof(addr));
-    listen(srv, 5);
+int srv = socket(AF_INET, SOCK_STREAM, 0);
+struct sockaddr_in addr = {
+.sin_family = AF_INET,
+.sin_port   = htons(4444),
+.sin_addr.s_addr = INADDR_ANY
+};
+int opt = 1;
+setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &amp;opt, sizeof(opt));
+bind(srv, (struct sockaddr*)&amp;addr, sizeof(addr));
+listen(srv, 5);
 
-    while (1) {
-        int cli = accept(srv, NULL, NULL);
-        if (fork() == 0) {
-            close(srv);
-            handle(cli);
-            close(cli);
-            exit(0);
-        }
-        close(cli);
-    }
+while (1) {
+int cli = accept(srv, NULL, NULL);
+client_fd = cli;      
+if (fork() == 0) {
+close(srv);
+handle(cli);
+close(cli);
+exit(0);
+}
+close(cli);
+}
 }</code></pre></div>
 <div class="code-wrapper"><div class="code-header"><span>bash</span><button class="copy-btn" aria-label="Copy code"></button></div><pre><code>gcc -o server server.c -fno-stack-protector -no-pie
 ./server &amp;</code></pre></div>

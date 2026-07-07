@@ -385,41 +385,46 @@ Real binaries aren't run from the command line and piped to. They're network ser
 #include <sys/socket.h>
 #include <netinet/in.h>
 
+int client_fd;
+
 void win(void) {
-    // in real scenario: dup2 socket to stdin/stdout, then execve
-    execl("/bin/sh", "sh", NULL);
+dup2(client_fd, 0);
+dup2(client_fd, 1);
+dup2(client_fd, 2);
+execl("/bin/sh", "sh", NULL);
 }
 
 void handle(int fd) {
-    char buf[128];
-    char greeting[] = "hello: ";
-    write(fd, greeting, sizeof(greeting)-1);
-    read(fd, buf, 256);   // overflow
-    write(fd, "ok\n", 3);
+char buf[128];
+char greeting[] = "hello: ";
+write(fd, greeting, sizeof(greeting)-1);
+read(fd, buf, 256);   // overflow
+write(fd, "ok\n", 3);
 }
 
 int main(void) {
-    int srv = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in addr = {
-        .sin_family = AF_INET,
-        .sin_port   = htons(4444),
-        .sin_addr.s_addr = INADDR_ANY
-    };
-    int opt = 1;
-    setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    bind(srv, (struct sockaddr*)&addr, sizeof(addr));
-    listen(srv, 5);
+int srv = socket(AF_INET, SOCK_STREAM, 0);
+struct sockaddr_in addr = {
+.sin_family = AF_INET,
+.sin_port   = htons(4444),
+.sin_addr.s_addr = INADDR_ANY
+};
+int opt = 1;
+setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+bind(srv, (struct sockaddr*)&addr, sizeof(addr));
+listen(srv, 5);
 
-    while (1) {
-        int cli = accept(srv, NULL, NULL);
-        if (fork() == 0) {
-            close(srv);
-            handle(cli);
-            close(cli);
-            exit(0);
-        }
-        close(cli);
-    }
+while (1) {
+int cli = accept(srv, NULL, NULL);
+client_fd = cli;      
+if (fork() == 0) {
+close(srv);
+handle(cli);
+close(cli);
+exit(0);
+}
+close(cli);
+}
 }
 ```
 
